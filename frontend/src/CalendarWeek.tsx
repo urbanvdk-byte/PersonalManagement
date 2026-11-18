@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent} from 'react';
-import {dayKey} from './date';
+import {dayKey,makeDay} from './date';
+import {layoutTimedItems} from './calendarLayout';
 import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
 import {HOUR_HEIGHT,fromTime,movePreview,resizePreview,toScheduledAt,isPreviewChanged,type CalendarPreview,type GestureMode} from './calendarInteraction';
@@ -50,8 +51,31 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
  const nowKey=dayKey(now);
  const nowMinutes=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
  const rangeOn=Boolean(selection.start&&selection.end);
- const columns:CSSProperties={gridTemplateColumns:'64px repeat('+days.length+', minmax(0,1fr))'};
- const innerWidth=Math.max(900,64+days.length*130);
+ // Timed events and tasks participate in the same collision layout, just
+ // like Google Calendar. Each date gets enough horizontal space for its
+ // busiest time slot, with horizontal scrolling instead of hidden titles.
+ const dayLayouts=days.map(d=>{
+   const key=dayKey(d);
+   const tasks=store.tasks.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
+     id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,
+     priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
+     emoji:t.area_id?areaEmoji(store.areas.find(a=>a.id===t.area_id)?.emoji):null,record:t
+   }));
+   const events=store.events.filter(e=>e.starts_at.startsWith(key)).map(e=>({
+     id:e.id,kind:'events' as const,title:e.title,start:e.starts_at,
+     minutes:Math.max(15,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),
+     priorityColor:e.color,fill:e.color,emoji:null,record:e
+   }));
+   const placement=layoutTimedItems([...tasks,...events].map(b=>({
+     id:b.kind+'-'+b.id,
+     start:fromTime(b.start),
+     end:fromTime(b.start)+b.minutes
+   })));
+   return {key,tasks,events,placement};
+ });
+ const widths=dayLayouts.map(info=>Math.max(132,info.placement.maxColumns*102));
+ const columns:CSSProperties={gridTemplateColumns:'64px '+widths.map(w=>'minmax('+w+'px,1fr)').join(' ')};
+ const innerWidth=Math.max(970,64+widths.reduce((sum,width)=>sum+width,0));
 
  function trackAt(x:number):{key:string;rect:DOMRect}|null{
    const tracks=scrollRef.current?.querySelectorAll<HTMLElement>('[data-calendar-day]');
@@ -182,18 +206,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}>{store.tasks.filter(t=>isOpen(t.status)&&!t.scheduled_at&&t.due_at?.startsWith(dayKey(d))).slice(0,3).map(t=><button key={t.id} onClick={()=>edit({kind:'tasks',record:t})}>{t.title}</button>)}</div>)}</div>
    <div className="cal-row cal-body" style={columns}>
     <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
-    {days.map(d=>{
-      const key=dayKey(d);
-      const tasks=store.tasks.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
-        id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,
-        priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
-        emoji:t.area_id?areaEmoji(store.areas.find(a=>a.id===t.area_id)?.emoji):null,record:t
-      }));
-      const events=store.events.filter(e=>e.starts_at.startsWith(key)).map(e=>({
-        id:e.id,kind:'events' as const,title:e.title,start:e.starts_at,
-        minutes:Math.max(15,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),
-        priorityColor:e.color,fill:e.color,emoji:null,record:e
-      }));
+    {dayLayouts.map(({key,tasks,events,placement})=>{
       const pending=preview?.day===key?store.tasks.find(t=>t.id===preview.taskId):null;
       return <div key={key} data-calendar-day={key}
         className={'day-track '+(day===key?'active ':'')+(rangeOn?'in-range':'')+(pending?' gesture-target':'')}
@@ -202,7 +215,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           if(e.target!==e.currentTarget)return;
           const rect=e.currentTarget.getBoundingClientRect();
           const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));
-          const date=new Date(d);date.setHours(START,minute,0,0);slot(date);
+          const date=makeDay(key);date.setHours(START,minute,0,0);slot(date);
         }}>
         {[...tasks,...events].map(b=>{
           const t=new Date(b.start);const minute=t.getHours()*60+t.getMinutes();
@@ -210,10 +223,19 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           const top=Math.max(0,(minute-START*60)*HOUR_HEIGHT/60);
           const height=Math.max(18,Math.min(b.minutes*HOUR_HEIGHT/60,(END-START)*HOUR_HEIGHT-top));
           const task=b.kind==='tasks';
+          const location=placement.placements.get(b.kind+'-'+b.id);
           const gestureTask=task&&preview?.taskId===b.id;
           return <button key={b.kind+b.id}
             className={'cal-item '+(task?'task-block':'event-block')+(task&&b.minutes<60?' compact-task':'')+(gestureTask?' gesture-source':'')}
-            style={{top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35'}}
+            style={{
+              top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35',
+              left:'calc('+(location?.leftPercent??0)+'% + 3px)',
+              width:'calc('+(location?.widthPercent??100)+'% - 6px)',
+              right:'auto'
+            }}
+            data-layout-column={location?.column??0}
+            data-layout-columns={location?.columns??1}
+            data-layout-span={location?.span??1}
             onPointerDown={task?e=>{
               const side=(e.target as HTMLElement).closest<HTMLElement>('[data-resize]')?.dataset.resize;
               const mode:GestureMode=side==='start'?'resize-start':side==='end'?'resize-end':'move';
