@@ -1,4 +1,19 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,type Locator} from '@playwright/test';
+
+async function revealTask(task:Locator){
+  await task.scrollIntoViewIfNeeded();
+  await task.evaluate(node=>{
+    const scroller=node.closest('.calendar-scroll');
+    if(scroller)scroller.scrollTop=Math.max(0,scroller.scrollTop-155);
+  });
+  await expect.poll(async()=>{
+    const box=await task.boundingBox();
+    if(!box)return false;
+    return task.page().evaluate(({x,y})=>Boolean(document.elementFromPoint(x,y)?.closest('.cal-item.task-block')),
+      {x:box.x+Math.min(24,box.width/3),y:box.y+box.height/2});
+  }).toBe(true);
+}
+
 
 const STORAGE='personalmanagement:pages-demo:v1';
 const taskTitle='Обсудить план проекта';
@@ -17,26 +32,23 @@ async function taskDuration(page){
 test('mouse moves a task by two hours and persists its new schedule',async({page})=>{
   await page.goto('/');
   const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
-  await task.scrollIntoViewIfNeeded();
+  await revealTask(task);
   const box=await task.boundingBox();
   expect(box).not.toBeNull();
   const x=box!.x+Math.min(box!.width/2,35);
   const y=box!.y+box!.height/2;
   const before=await taskStart(page);
-  page.on('pageerror',error=>console.log('BROWSER ERROR',error.message));
-  console.log('MOVE INPUT',JSON.stringify({x,y,box,hit:await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.outerHTML.slice(0,350),{x,y})}));
   await page.mouse.move(x,y);
   await page.mouse.down();
   await page.mouse.move(x,y+82.67,{steps:12});
   await page.mouse.up();
-  console.log('MOVE RESULT',JSON.stringify(await page.evaluate(()=>({warning:document.querySelector('.error-banner')?.textContent,preview:document.querySelector('.calendar-gesture-status')?.textContent,dialog:document.querySelector('.drawer')?.textContent?.slice(0,130)}))));
   await expect.poll(()=>taskStart(page)).not.toBe(before);
   expect((await taskStart(page))?.slice(11,16)).toBe('12:00');
 });
 test('mouse bottom edge increases task duration in 15-minute steps',async({page})=>{
   await page.goto('/');
   const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
-  await task.scrollIntoViewIfNeeded();
+  await revealTask(task);
   const box=await task.boundingBox();
   expect(box).not.toBeNull();
   const x=box!.x+24;
@@ -51,7 +63,7 @@ test('mouse bottom edge increases task duration in 15-minute steps',async({page}
 test('mouse top edge moves start earlier while keeping the end fixed',async({page})=>{
   await page.goto('/');
   const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
-  await task.scrollIntoViewIfNeeded();
+  await revealTask(task);
   const box=await task.boundingBox();
   expect(box).not.toBeNull();
   const x=box!.x+24;
@@ -68,7 +80,7 @@ test('phone long press moves task but a short tap opens editor',async({browser})
   const page=await context.newPage();
   await page.goto('/');
   const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
-  await task.scrollIntoViewIfNeeded();
+  await revealTask(task);
   const box=await task.boundingBox();
   expect(box).not.toBeNull();
   const x=box!.x+25;
