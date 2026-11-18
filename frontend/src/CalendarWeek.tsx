@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent} from 'react';
-import {dayKey} from './date';
+import {dayKey,makeDay} from './date';
 import {layoutTimedItems} from './calendarLayout';
 import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
@@ -215,7 +215,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           if(e.target!==e.currentTarget)return;
           const rect=e.currentTarget.getBoundingClientRect();
           const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));
-          const date=new Date(d);date.setHours(START,minute,0,0);slot(date);
+          const date=makeDay(key);date.setHours(START,minute,0,0);slot(date);
         }}>
         {[...tasks,...events].map(b=>{
           const t=new Date(b.start);const minute=t.getHours()*60+t.getMinutes();
