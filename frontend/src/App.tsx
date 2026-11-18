@@ -14,7 +14,7 @@ const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
 const statuses:Record<string,string>={inbox:'Входящие',planned:'Запланировано',in_progress:'В работе',waiting:'Ожидаю',done:'Выполнено',someday:'Когда-нибудь',cancelled:'Отменено'};
 const projectStatuses:Record<string,string>={active:'Активен',paused:'Пауза',done:'Завершён',archived:'Архив'};
 const labels:Record<Kind,string>={areas:'направление',projects:'проект',goals:'цель',tasks:'задачу',events:'событие'};
-const colors=['#d84f46','#e5ad27','#0a91df','#91a0b3'];
+const colors=['#e25c55','#ff9b3e','#336dd7','#8b9bb0'];
 const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
 function percent(goal:Goal){const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
@@ -128,19 +128,24 @@ export default function App(){
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
-   <header className="topbar"><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>МОЙ ПЛАН</small><h1>{title}</h1></div></div>
+   <header className="topbar"><div className="hero-decoration" aria-hidden="true"></div><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>PERSONAL MANAGEMENT <span className="hero-star">✦</span></small><h1>{title}</h1><p className="hero-subtitle">{page==='calendar'?'Ваша неделя, задачи и важные моменты':'Все важное в одном месте — от идеи до результата'}</p></div></div>
     <div className="top-actions">{page==='calendar'&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>setWeek(addDays(week,-7))}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>setWeek(addDays(week,7))}><ChevronRight size={19}/></button><span>{fmtDate(week,{day:'numeric',month:'short'})} — {fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
      <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
    </header>
+   <section className="overview-strip" aria-label="Краткий обзор">
+    <div className="overview-card"><div className="overview-symbol"><ListTodo size={18}/></div><div><small>В работе</small><strong>{active.length} <span>задач</span></strong></div></div>
+    <div className="overview-card"><div className="overview-symbol"><FolderKanban size={18}/></div><div><small>Активных проектов</small><strong>{data.projects.filter(p=>p.status==='active').length} <span>проектов</span></strong></div></div>
+    <div className="overview-card"><div className="overview-symbol"><Target size={18}/></div><div><small>Цели на контроле</small><strong>{data.goals.length} <span>целей</span></strong></div></div>
+   </section>
    {isDemo&&<div className="demo-banner"><span><strong>Демонстрация GitHub Pages</strong> · Данные только в этом браузере, без синхронизации. Не вводите личную или конфиденциальную информацию.</span><button onClick={()=>{if(window.confirm('Сбросить демонстрационные записи?'))api.resetDemo().then(setData).catch(e=>setError(String(e)))}}>Сбросить демо</button></div>}
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
     {page==='calendar'&&<div className="calendar-layout"><WeekView start={week} store={data} day={selectedDay} setDay={setSelectedDay} edit={setEditing} slot={addSlot}/><aside className="day-panel">
      <small>ПЛАН ДНЯ</small><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
-     <div className="day-stat"><strong>{selectedTasks.length}</strong> задач на выбранный день</div><h3>Задачи</h3>
+     <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div><h3>Задачи</h3>
      <TaskList tasks={selectedTasks} store={data} edit={setEditing} toggle={toggle} message="На этот день задач пока нет"/>
      {selectedEvents.length>0&&<><h3>События</h3>{selectedEvents.map(e=><button className="event-row" key={e.id} onClick={()=>setEditing({kind:'events',record:e})}><span style={{background:e.color}}/><div><strong>{e.title}</strong><small>{fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></div></button>)}</>}
      <button className="inline-add" onClick={()=>open('tasks',{scheduled_at:selectedDay+'T10:00',status:'planned'})}><Plus size={16}/> Добавить в этот день</button>
