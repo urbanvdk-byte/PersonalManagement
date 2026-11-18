@@ -1,0 +1,3 @@
+import type {Kind,Store} from './types';
+async function request<T>(url:string, init?:RequestInit):Promise<T>{const r=await fetch(url,{...init,headers:{'Content-Type':'application/json',...(init?.headers||{})},cache:'no-store'});if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(typeof e.detail==='string'?e.detail:'Ошибка HTTP '+r.status)}if(r.status===204)return undefined as T;return r.json()}
+export const api={load:()=>request<Store>('/api/bootstrap'),save:(kind:Kind,data:Record<string,unknown>,id?:number)=>request('/api/'+kind+(id?'/'+id:''),{method:id?'PATCH':'POST',body:JSON.stringify(data)}),remove:(kind:Kind,id:number)=>request<void>('/api/'+kind+'/'+id,{method:'DELETE'})};

@@ -1,0 +1,16 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+data/
+**/data/
+**/node_modules/
+**/dist/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+*.db
+*.db-shm
+*.db-wal
