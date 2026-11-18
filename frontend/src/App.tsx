@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X } from 'lucide-react';
 import { api, isDemo } from './api';
+import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
@@ -27,13 +28,36 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
  const {kind,record,defaults}=editing;
  const [form,setForm]=useState<Record<string,unknown>>({...defaults,...record});
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+ const missingTaskTime=kind==='tasks'&&!hasScheduledTime(form.scheduled_at);
+ const invalidTaskDuration=kind==='tasks'&&!isValidTaskDuration(form.duration_minutes??60);
+ const missingTitle=!String(form.title??'').trim();
+ const preventSave=missingTitle||missingTaskTime||invalidTaskDuration;
  const set=(key:string,value:unknown)=>setForm(v=>({...v,[key]:value}));
- const field=(key:string,label:string,placeholder='')=><label className="form-field"><span>{label}</span><input value={String(form[key]??'')} placeholder={placeholder} onChange={e=>set(key,e.target.value)}/></label>;
+ const field=(key:string,label:string,placeholder='')=><label className={'form-field '+(key==='title'&&missingTitle?'required-missing':'')}><span>{label}</span><input value={String(form[key]??'')} placeholder={placeholder} aria-invalid={key==='title'&&missingTitle} onChange={e=>set(key,e.target.value)}/></label>;
  const choices=(key:string,label:string,opts:Record<string,string>)=><label className="form-field"><span>{label}</span><select value={String(form[key]??Object.keys(opts)[0])} onChange={e=>set(key,e.target.value)}>{Object.entries(opts).map(([value,name])=><option key={value} value={value}>{name}</option>)}</select></label>;
  const refs=(key:string,label:string,items:{id:number;title:string}[])=><label className="form-field"><span>{label}</span><select value={String(form[key]??'')} onChange={e=>set(key,e.target.value?Number(e.target.value):null)}><option value="">Не выбрано</option>{items.map(x=><option key={x.id} value={x.id}>{x.title}</option>)}</select></label>;
- const dateField=(key:string,label:string,time=false)=><label className="form-field"><span>{label}</span><input type={time?'datetime-local':'date'} value={String(form[key]??'').slice(0,time?16:10)} onChange={e=>set(key,e.target.value||null)}/></label>;
- const number=(key:string,label:string,defaultValue=0)=><label className="form-field"><span>{label}</span><input type="number" step={kind==='goals'?'any':'1'} min={key==='duration_minutes'?1:undefined} value={Number(form[key]??defaultValue)} onChange={e=>set(key,Number(e.target.value))}/></label>;
- async function submit(e:FormEvent){e.preventDefault();setBusy(true);setError('');
+ const dateField=(key:string,label:string,time=false)=>{
+   const required=kind==='tasks'&&key==='scheduled_at';
+   const invalid=required&&missingTaskTime;
+   return <label className={'form-field '+(invalid?'required-missing':'')}><span>{label}{required?' *':''}</span>
+     <input type={time?'datetime-local':'date'} value={String(form[key]??'').slice(0,time?16:10)}
+       aria-invalid={invalid} required={required} onChange={e=>set(key,e.target.value||null)}/>
+     {invalid&&<small className="field-error" role="alert">Укажите дату и время — без них задача не сохранится.</small>}
+   </label>;
+ };
+ const number=(key:string,label:string,defaultValue=0)=>{
+   const duration=kind==='tasks'&&key==='duration_minutes';
+   return <label className={'form-field '+(duration&&invalidTaskDuration?'required-missing':'')}><span>{label}</span>
+     <input type="number" min={duration?30:undefined} max={duration?1440:undefined}
+       step={duration?15:kind==='goals'?'any':1} aria-invalid={duration&&invalidTaskDuration}
+       value={Number(form[key]??defaultValue)} onChange={e=>set(key,Number(e.target.value))}/>
+     {duration&&<small className={invalidTaskDuration?'field-error':'field-hint'}>От 30 минут, шаг 15 минут (30, 45, 60, 75…)</small>}
+   </label>;
+ };
+ async function submit(e:FormEvent){
+  e.preventDefault();
+  if(preventSave){setError('Заполните обязательные поля задачи и проверьте длительность.');return;}
+  setBusy(true);setError('');
   const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;
   if(kind==='tasks'){
     Object.assign(payload,priorityFlags(Number(payload.priority??4)));
@@ -84,7 +108,10 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
    </>}
    {kind==='events'&&<><div className="two">{dateField('starts_at','Начало *',true)}{dateField('ends_at','Окончание *',true)}</div><label className="form-field"><span>Цвет</span><input type="color" value={String(form.color??'#f3bb28')} onChange={e=>set('color',e.target.value)}/></label></>}
    {error&&<p role="alert" className="error">{error}</p>}
-   <div className="form-actions">{record&&<button type="button" className="danger-btn" disabled={busy} onClick={doRemove}><Trash2 size={15}/> Удалить</button>}<button className="primary-btn" disabled={busy} type="submit"><Check size={16}/>{busy?'Сохраняю…':'Сохранить'}</button></div>
+   <div className="form-actions">{record&&<button type="button" className="danger-btn" disabled={busy} onClick={doRemove}><Trash2 size={15}/> Удалить</button>}
+     <button type="button" className="secondary-btn cancel-task-btn" disabled={busy} onClick={close}>Отмена</button>
+     <button className="primary-btn" disabled={busy||preventSave} type="submit"><Check size={16}/>{busy?'Сохраняю…':'Сохранить'}</button>
+   </div>
   </form></aside></div>
 }
 function TaskList({tasks,store,edit,toggle,message='Здесь пока нет задач'}:{tasks:Task[];store:Store;edit:(e:Editing)=>void;toggle:(task:Task)=>void;message?:string}){
@@ -165,7 +192,7 @@ export default function App(){
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
     {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot}/><aside className="day-panel">
-     <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onRange={pickMonthRange} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})}/>
+     <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onRange={pickMonthRange} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})} onToday={resetToday}/>
      <div className="day-plan-heading"><small>ПЛАН ДНЯ</small></div><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
      <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div><h3>Задачи</h3>
      <TaskList tasks={selectedTasks} store={data} edit={setEditing} toggle={toggle} message="На этот день задач пока нет"/>
@@ -183,7 +210,7 @@ export default function App(){
       return <button className="entity-card" key={p.id} onClick={()=>setEditing({kind:'projects',record:p})}><header><FolderKanban size={21}/><span className="pill">{projectStatuses[p.status]||p.status}</span></header><h3>{p.title}</h3><p>{p.description||groupName(p.area_id,data.areas)}</p><div className="card-meta"><span>{done}/{tasks.length} задач</span><span>{p.due_date?fmtDate(p.due_date):'Без срока'}</span></div><div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div><small>{data.goals.filter(g=>g.project_id===p.id).length} связанных целей</small></button>;
      })}{!data.projects.length&&<div className="empty-card">Создайте первый проект, а затем свяжите с ним задачи и цели.</div>}</div><h3 className="section-label">Задачи по проектам</h3><TaskList tasks={active.filter(t=>t.project_id!==null)} store={data} edit={setEditing} toggle={toggle}/></section>}
     {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Измеримые цели</h2><p>Целевые значения, фактический прогресс, период достижения.</p></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} className="entity-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{percent(g)}%</span></header><h3>{g.title}</h3><p>{groupName(g.project_id,data.projects)}</p><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div><div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую измеримую цель: показатель, период и ожидаемый результат.</div>}</div></section>}
-    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji" style={{background:a.color}}>{areaEmoji(a.emoji)}</span><span className="pill">Направление</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
+    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji">{areaEmoji(a.emoji)}</span><span className="pill">Направление</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
     </>}
    </main>
   </div>

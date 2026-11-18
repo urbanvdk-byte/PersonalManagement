@@ -1,6 +1,7 @@
 import type {Kind,Store} from './types';
 import {addDays,dateTimeLocal,dayKey,weekStart} from './date';
 import {DEFAULT_TASK_COLOR} from './taskPalette';
+import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 
 // GitHub Pages has no backend. This isolated adapter stores only DEMO data in this browser.
 // The production build keeps using the FastAPI + SQLite endpoints unchanged.
@@ -75,6 +76,14 @@ const defaults:Record<Kind,Row>={
 };
 async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
   if('title' in values&&(!String(values.title||'').trim()))throw Error('Укажите название');
+  if(kind==='tasks'){
+    if((!id || Object.prototype.hasOwnProperty.call(values,'scheduled_at'))&&!hasScheduledTime(values.scheduled_at)){
+      throw Error('Укажите обязательные дату и время задачи');
+    }
+    if(Object.prototype.hasOwnProperty.call(values,'duration_minutes')&&!isValidTaskDuration(values.duration_minutes)){
+      throw Error('Продолжительность: минимум 30 минут, шаг 15 минут');
+    }
+  }
   const data=loadDemo();
   const list=data[kind] as unknown as Row[];
   const stamp=new Date().toISOString();

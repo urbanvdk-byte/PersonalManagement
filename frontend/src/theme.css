@@ -604,3 +604,82 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .cal-item.task-block{padding-right:21px}
   .cal-area-emoji{right:2px;top:2px}
 }
+
+/* Follow-up: readable 30-minute tasks and transparent emoji. */
+.mini-month-today{
+  width:auto!important;
+  min-width:64px;
+  padding:5px 9px!important;
+  background:transparent!important;
+  border:1px solid #d9e4f5!important;
+  border-radius:9px!important;
+  font-size:11px;
+  font-weight:750;
+  color:#17448d!important;
+}
+.mini-month-today:hover{background:#fff2e2!important;border-color:#ffc281!important}
+.cal-item.task-block.compact-task{
+  display:flex;
+  flex-direction:row;
+  align-items:center;
+  justify-content:flex-start;
+  gap:0;
+  padding:0 22px 0 5px;
+  line-height:1.1;
+}
+.cal-item.task-block.compact-task strong{
+  flex:1;
+  min-width:0;
+  display:block;
+  font-size:10px;
+  line-height:12px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  -webkit-line-clamp:unset;
+}
+.cal-item.task-block.compact-task small{display:none}
+.cal-area-emoji{
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  font-size:13px;
+  width:18px;
+  height:18px;
+  right:2px;
+  top:1px;
+}
+.area-emoji{
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  width:auto;
+  height:auto;
+  font-size:23px;
+}
+.emoji-choice,.emoji-choice:hover,.emoji-choice.chosen{
+  background:transparent!important;
+}
+.emoji-choice.chosen{
+  border-color:#ff963b;
+  box-shadow:inset 0 0 0 1px #ff963b;
+}
+.form-field.required-missing input{
+  border-color:#db4040!important;
+  box-shadow:0 0 0 2px rgba(219,64,64,.13)!important;
+}
+.field-error{
+  font-size:11px;
+  color:#bf2f35;
+  line-height:1.45;
+}
+.field-hint{
+  font-size:11px;
+  color:#7285a3;
+  line-height:1.45;
+}
+.cancel-task-btn{
+  background:#fff;
+  border-color:#dbe5f3;
+}
+.form-actions .primary-btn:disabled{opacity:.48;box-shadow:none;transform:none}

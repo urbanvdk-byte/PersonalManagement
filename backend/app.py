@@ -182,8 +182,8 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
             if type(value) not in (float, int) or abs(value) > 1e12:
                 raise HTTPException(422, f"Некорректное число {key}")
         elif key == "duration_minutes":
-            if type(value) is not int or not 1 <= value <= 1440:
-                raise HTTPException(422, "Продолжительность от 1 до 1440 минут")
+            if type(value) is not int or not 30 <= value <= 1440 or value % 15:
+                raise HTTPException(422, "Продолжительность: от 30 до 1440 минут, шаг 15 минут")
         elif key in ID_KEYS:
             if value is not None and (type(value) is not int or value < 1):
                 raise HTTPException(422, f"Некорректный идентификатор {key}")
@@ -211,6 +211,13 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
                 raise HTTPException(422, "Выберите один из 8 доступных цветов задачи")
             if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
                 raise HTTPException(422, "Цвет должен иметь формат #RRGGBB")
+    if kind == "tasks":
+        # Only newly created tasks must always have a schedule. Existing legacy
+        # unscheduled tasks remain readable and can be marked done or deleted.
+        if creating and not payload.get("scheduled_at"):
+            raise HTTPException(422, "Укажите обязательные дату и время задачи")
+        if "scheduled_at" in payload and not payload["scheduled_at"]:
+            raise HTTPException(422, "Дата и время задачи обязательны")
     if kind == "events" and creating and (not payload.get("starts_at") or not payload.get("ends_at")):
         raise HTTPException(422, "Нужно указать начало и окончание события")
     if kind == "events" and payload.get("starts_at") and payload.get("ends_at") and payload["starts_at"] >= payload["ends_at"]:
