@@ -15,10 +15,11 @@ type MiniMonthProps={
   onRange:(start:string,end:string)=>void;
   onChangeMonth:(step:number)=>void;
   onClearRange:()=>void;
+  onToday:()=>void;
 };
 type ActivePointer={id:number;anchor:string;current:string;dragged:boolean};
 
-export default function MiniMonth({viewMonth,selectedDay,week,selection,busyDays,onPick,onRange,onChangeMonth,onClearRange}:MiniMonthProps){
+export default function MiniMonth({viewMonth,selectedDay,week,selection,busyDays,onPick,onRange,onChangeMonth,onClearRange,onToday}:MiniMonthProps){
   const [preview,setPreview]=useState<DateSelection|null>(null);
   const pointer=useRef<ActivePointer|null>(null);
   const days=monthGrid(viewMonth);
@@ -80,6 +81,7 @@ export default function MiniMonth({viewMonth,selectedDay,week,selection,busyDays
     <header className="mini-month-head">
       <h3>{label.charAt(0).toUpperCase()+label.slice(1)}</h3>
       <div className="mini-month-arrows">
+        <button type="button" className="mini-month-today" onClick={onToday} aria-label="Перейти к сегодняшней дате">Сегодня</button>
         <button type="button" aria-label="Предыдущий месяц" onClick={()=>onChangeMonth(-1)}><ChevronLeft size={17}/></button>
         <button type="button" aria-label="Следующий месяц" onClick={()=>onChangeMonth(1)}><ChevronRight size={17}/></button>
       </div>

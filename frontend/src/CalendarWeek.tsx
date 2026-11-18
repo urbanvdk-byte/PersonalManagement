@@ -66,10 +66,12 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
         if(minutes>=END*60||minutes+b.minutes<=START*60)return null;
         const top=Math.max(0,(minutes-START*60)*HOUR_HEIGHT/60);
         const height=Math.max(18,Math.min(b.minutes*HOUR_HEIGHT/60,(END-START)*HOUR_HEIGHT-top));
-        return <button key={b.kind+b.id} className={'cal-item '+(b.kind==='tasks'?'task-block':'event-block')}
+        return <button key={b.kind+b.id} className={'cal-item '+(b.kind==='tasks'?'task-block':'event-block')+(b.kind==='tasks'&&b.minutes<60?' compact-task':'')}
           style={{top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35'}}
-          onClick={e=>{e.stopPropagation();edit({kind:b.kind,record:b.record})}} title={b.title}>
-          <strong>{b.title}</strong><small>{b.start.slice(11,16)}</small>
+          onClick={e=>{e.stopPropagation();edit({kind:b.kind,record:b.record})}}
+          title={b.title+' · '+b.start.slice(11,16)} aria-label={b.title+' · '+b.start.slice(11,16)}>
+          <strong>{b.title}</strong>
+          {!(b.kind==='tasks'&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
           {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
         </button>;
       })}
