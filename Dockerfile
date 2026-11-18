@@ -1,4 +1,4 @@
-FROM node:22-alpine AS webbuild
+FROM node:22-bookworm-slim AS webbuild
 WORKDIR /web
 COPY frontend/package*.json ./
 RUN npm install --no-audit --no-fund
