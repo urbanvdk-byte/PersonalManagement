@@ -359,3 +359,150 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .drawer{padding:23px}
 }
 @media(prefers-reduced-motion:reduce){button,.entity-card{transition:none!important}}
+
+/* Step 1: accessible mini month directly above the day plan. */
+.mini-month{
+  padding:2px 0 16px;
+  margin:0 0 21px;
+  border-bottom:1px solid #e0e9f7;
+}
+.mini-month-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  margin-bottom:15px;
+}
+.day-panel .mini-month-head h3{
+  margin:0;
+  font-size:15px;
+  letter-spacing:-.3px;
+  font-weight:760;
+  text-transform:capitalize;
+  color:#173b7f;
+}
+.mini-month-arrows{display:flex;align-items:center;gap:4px}
+.mini-month-arrows button{
+  width:30px;height:30px;
+  border:0;border-radius:9px;
+  display:grid;place-items:center;
+  background:transparent;color:#52688d;
+}
+.mini-month-arrows button:hover{background:#fff0df;color:#bf671a}
+.mini-month-grid{
+  display:grid;
+  grid-template-columns:repeat(7,minmax(0,1fr));
+  row-gap:5px;
+  column-gap:1px;
+  align-items:center;
+}
+.mini-weekday{
+  font-size:10px;
+  font-weight:700;
+  color:#7187a9;
+  text-align:center;
+  padding:0 0 6px;
+}
+.mini-day{
+  height:30px;
+  width:100%;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  flex-direction:column;
+  justify-content:center;
+  position:relative;
+  background:transparent;
+  border:0;
+  padding:0;
+  border-radius:8px;
+  font-size:11px;
+  font-weight:560;
+  color:#193964;
+}
+.mini-day:hover{background:#e9f1ff}
+.mini-day.outside{color:#a6b1c1}
+.mini-day.week-active{background:#e7efff;border-radius:0}
+.mini-day.range-active{background:#ffead2;border-radius:0;color:#8d4a13}
+.mini-day.range-start{border-radius:10px 0 0 10px}
+.mini-day.range-end{border-radius:0 10px 10px 0}
+.mini-day.range-start.range-end{border-radius:10px}
+.mini-day.date-active .mini-day-number{
+  display:grid;place-items:center;
+  width:28px;height:28px;
+  border-radius:50%;
+  background:linear-gradient(135deg,#ffb85f,#ff9234);
+  color:#102b63;
+  font-weight:850;
+  box-shadow:0 3px 9px rgba(255,151,56,.25);
+}
+.mini-day.date-today:not(.date-active) .mini-day-number{
+  font-weight:850;
+  color:#df7725;
+  text-decoration:underline;
+  text-underline-offset:3px;
+}
+.mini-day-dot{
+  position:absolute;
+  bottom:2px;
+  height:3px;width:3px;
+  border-radius:50%;
+  background:#2e63bb;
+  pointer-events:none;
+}
+.mini-day.date-active .mini-day-dot{background:#fff}
+.mini-month-selection{
+  margin-top:14px;
+  min-height:23px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:5px;
+  color:#7589a6;
+  font-size:10px;
+  line-height:1.4;
+}
+.mini-month-selection button{
+  flex:none;width:24px;height:24px;
+  border-radius:8px;border:1px solid #e2eaf7;
+  display:grid;place-items:center;
+  color:#7a90ab;background:#fff;
+}
+.mini-month-selection button:hover{color:#cc6b18;background:#fff2e4}
+.day-panel .day-plan-heading{margin:3px 0 0}
+.day-panel .day-plan-heading small{color:#dd812e;font-size:10px;font-weight:800;letter-spacing:1.4px}
+.day-panel .day-plan-heading + h2{margin:7px 0 23px}
+@media(max-width:1070px){
+  /* Keep the mini-month accessible: the prior stylesheet hid the entire day panel. */
+  .calendar-layout{
+    display:flex;
+    flex-direction:column;
+    height:auto;
+    min-height:0;
+    overflow:visible;
+  }
+  .calendar-scroll{
+    height:min(65vh,630px);
+    min-height:400px;
+    flex:none;
+    border-radius:20px 20px 0 0;
+  }
+  .day-panel{
+    display:block;
+    flex:none;
+    overflow:visible;
+    border-left:0;
+    border-top:1px solid #e2eaf6;
+    border-radius:0 0 20px 20px;
+    padding:22px;
+  }
+  .mini-month{max-width:370px;margin-left:auto;margin-right:auto}
+}
+@media(max-width:760px){
+  .calendar-layout{height:auto;min-height:0}
+  .calendar-scroll{height:470px;min-height:0;border-radius:14px 14px 0 0}
+  .day-panel{padding:18px 16px;border-radius:0 0 14px 14px}
+  .mini-month{max-width:360px}
+  .mini-day{height:36px;font-size:12px}
+  .mini-day.date-active .mini-day-number{width:31px;height:31px}
+}
