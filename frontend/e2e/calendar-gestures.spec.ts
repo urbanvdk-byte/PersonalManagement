@@ -90,8 +90,31 @@ test('phone long press moves task but a short tap opens editor',async({browser})
   await page.waitForTimeout(570);
   await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+41.34}]});
   await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
-  await expect.poll(()=>taskStart(page)).not.toBe(undefined);
-  await expect.poll(()=>taskStart(page)).not.toBeNull();
-  expect((await taskStart(page))?.slice(11,16)).toBe('11:00');
+  await expect.poll(async()=>(await taskStart(page))?.slice(11,16)).toBe('11:00');
+  await revealTask(task);
+  const after=await task.boundingBox();
+  expect(after).not.toBeNull();
+  await page.touchscreen.tap(after!.x+25,after!.y+after!.height/2);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await context.close();
+});
+
+test('phone long press on bottom edge increases duration by one quarter hour',async({browser})=>{
+  const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+  const page=await context.newPage();
+  await page.goto('/');
+  const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
+  await revealTask(task);
+  const box=await task.boundingBox();
+  expect(box).not.toBeNull();
+  const x=box!.x+24;
+  const y=box!.y+box!.height-2;
+  const cdp=await context.newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+  await page.waitForTimeout(570);
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+10.34}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await expect.poll(()=>taskDuration(page)).toBe(75);
+  expect((await taskStart(page))?.slice(11,16)).toBe('10:00');
   await context.close();
 });
