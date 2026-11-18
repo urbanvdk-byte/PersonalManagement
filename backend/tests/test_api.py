@@ -118,3 +118,58 @@ def test_existing_unscheduled_tasks_remain_accessible(tmp_path, monkeypatch):
         assert old["scheduled_at"] is None
         assert client.patch(f'/api/tasks/{old["id"]}', headers=auth(), json={"status": "done"}).status_code == 200
         assert client.delete(f'/api/tasks/{old["id"]}', headers=auth()).status_code == 204
+
+
+def test_recurrence_validation_and_sparse_exceptions(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"recurrence.db"))
+    with TestClient(app) as client:
+        assert client.post("/api/tasks",headers=auth(),json={"title":"Invalid","scheduled_at":"2026-11-16T10:00","recurrence":"sometimes"}).status_code==422
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Повтор","scheduled_at":"2026-11-16T10:00",
+                       "recurrence":"weekly","recurrence_until":"2027-02-01"}).json()
+        assert task["recurrence"]=="weekly"
+        path=f'/api/task-occurrences/{task["id"]}/2026-11-23'
+        assert client.put(path,headers=auth(),json={"changes":{"status":"done"}}).status_code==200
+        assert client.put(path,headers=auth(),json={"changes":{"duration_minutes":45}}).json()["changes"]=={"status":"done","duration_minutes":45}
+        assert client.put(f'/api/task-occurrences/{task["id"]}/2026-11-24',headers=auth(),json={"changes":{"status":"done"}}).status_code==422
+        assert client.put(path,headers=auth(),json={"changes":{"recurrence":"daily"}}).status_code==422
+        data=client.get("/api/bootstrap",headers=auth()).json()
+        assert len(data["tasks"])==1
+        assert data["occurrences"][0]["changes"]["status"]=="done"
+        assert "occurrences" in client.get("/api/export",headers=auth()).json()["data"]
+        assert client.delete(path,headers=auth()).status_code==204
+        assert client.get("/api/bootstrap",headers=auth()).json()["occurrences"]==[]
+
+def test_split_series_moves_future_exceptions_without_creating_all_occurrences(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"split.db"))
+    with TestClient(app) as client:
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Серия","scheduled_at":"2026-01-31T09:00",
+                         "recurrence":"monthly"}).json()
+        client.put(f'/api/task-occurrences/{task["id"]}/2026-04-30',headers=auth(),json={"changes":{"status":"done"}})
+        new=client.post(f'/api/task-series/{task["id"]}/split',headers=auth(),json={
+            "occurrence_date":"2026-03-31","changes":{"title":"Новый этап","scheduled_at":"2026-03-31T11:00"}}).json()
+        assert new["id"]!=task["id"]
+        assert new["recurrence"]=="monthly"
+        assert new["scheduled_at"]=="2026-03-31T11:00"
+        data=client.get("/api/bootstrap",headers=auth()).json()
+        original=next(t for t in data["tasks"] if t["id"]==task["id"])
+        assert original["recurrence_until"]=="2026-03-30"
+        assert len(data["tasks"])==2
+        assert data["occurrences"][0]["task_id"]==new["id"]
+        assert client.delete(f'/api/tasks/{new["id"]}',headers=auth()).status_code==204
+        assert client.get("/api/bootstrap",headers=auth()).json()["occurrences"]==[]
+
+def test_recurrence_migration_preserves_legacy_task(tmp_path,monkeypatch):
+    import sqlite3
+    from app import SCHEMA
+    path=tmp_path/"before-repeat.db"
+    legacy=SCHEMA.replace("  recurrence_until TEXT,\n","")
+    with sqlite3.connect(path) as conn:
+        conn.executescript(legacy)
+        conn.execute("INSERT INTO tasks (title,scheduled_at) VALUES (?,?)",("Старая","2026-11-19T10:00"))
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(path))
+    with TestClient(app) as client:
+        t=client.get("/api/bootstrap",headers=auth()).json()["tasks"][0]
+        assert t["title"]=="Старая" and t["recurrence_until"] is None

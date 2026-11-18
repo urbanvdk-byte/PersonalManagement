@@ -792,3 +792,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .day-track .cal-item.task-block .cal-area-emoji{
   pointer-events:none;
 }
+
+/* Sparse recurring instances keep their previous colors, priority stripes,
+   drag/resize handles and side-by-side collision layout. */
+.drawer-form select[aria-label="Область изменения повторений"]{
+ border-color:#ffc487;
+ background:#fff7eb;
+ font-weight:700;
+ color:#9e5213;
+}
+.drawer-form select[aria-label="Область изменения повторений"]:focus{
+ border-color:#ff963b;
+}

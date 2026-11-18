@@ -58,10 +58,18 @@ CREATE TABLE IF NOT EXISTS tasks (
   scheduled_at TEXT, due_at TEXT,
   duration_minutes INTEGER NOT NULL DEFAULT 60,
   recurrence TEXT NOT NULL DEFAULT '',
+  recurrence_until TEXT,
   color TEXT NOT NULL DEFAULT '#3466d9',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS task_occurrences (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  occurrence_date TEXT NOT NULL,
+  changes TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (task_id,occurrence_date)
+);
+CREATE INDEX IF NOT EXISTS idx_occurrences_task ON task_occurrences(task_id);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
@@ -81,14 +89,18 @@ FIELDS = {
     "areas": {"title", "color", "emoji"},
     "projects": {"area_id", "title", "description", "status", "start_date", "due_date"},
     "goals": {"area_id", "project_id", "title", "description", "period_start", "period_end", "start_value", "target_value", "current_value", "unit"},
-    "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "color"},
+    "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "recurrence_until", "color"},
     "events": {"area_id", "project_id", "title", "notes", "starts_at", "ends_at", "color"},
 }
 STATUS = {"inbox", "planned", "in_progress", "waiting", "done", "someday", "cancelled"}
 PROJECT_STATUS = {"active", "paused", "done", "archived"}
+RECURRENCES = {"", "daily", "weekly", "monthly", "yearly"}
+OCCURRENCE_FIELDS = {"title", "notes", "priority", "important", "urgent", "status",
+                     "scheduled_at", "due_at", "duration_minutes", "color", "area_id",
+                     "project_id", "goal_id"}
 TASK_COLORS = {"#3466d9", "#16a2dc", "#12aaa1", "#39aa6f", "#e4b636", "#ff963b", "#e7635e", "#9463d6"}
 DATETIME_KEYS = {"scheduled_at", "due_at", "starts_at", "ends_at"}
-DATE_KEYS = {"start_date", "due_date", "period_start", "period_end"}
+DATE_KEYS = {"start_date", "due_date", "period_start", "period_end", "recurrence_until"}
 ID_KEYS = {"area_id", "project_id", "goal_id", "parent_id"}
 
 def db_path() -> Path:
@@ -121,6 +133,7 @@ def setup() -> None:
         for table, column, definition in (
             ("areas", "emoji", "TEXT NOT NULL DEFAULT '📁'"),
             ("tasks", "color", "TEXT NOT NULL DEFAULT '#3466d9'"),
+            ("tasks", "recurrence_until", "TEXT"),
         ):
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
@@ -165,7 +178,10 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
         elif key in ("notes", "description"):
             if not isinstance(value, str) or len(value) > 20000:
                 raise HTTPException(422, f"Некорректное поле {key}")
-        elif key in ("unit", "recurrence"):
+        elif key == "recurrence":
+            if not isinstance(value,str) or value not in RECURRENCES:
+                raise HTTPException(422, "Повторение: ежедневно, еженедельно, ежемесячно или ежегодно")
+        elif key == "unit":
             if not isinstance(value, str) or len(value) > 120:
                 raise HTTPException(422, f"Некорректное поле {key}")
         elif key == "status":
@@ -240,10 +256,16 @@ def health():
 @app.get("/api/bootstrap")
 def bootstrap():
     with connection() as conn:
-        return {
+        data = {
             name: [dict(r) for r in conn.execute(f"SELECT * FROM {name} ORDER BY id DESC")]
             for name in FIELDS
         }
+        data["occurrences"] = [
+            {"task_id":r["task_id"],"occurrence_date":r["occurrence_date"],
+             "changes":json.loads(r["changes"])}
+            for r in conn.execute("SELECT * FROM task_occurrences ORDER BY occurrence_date")
+        ]
+        return data
 
 @app.post("/api/{kind}", status_code=201)
 def create(kind: str, payload: dict[str, Any]):
@@ -283,6 +305,104 @@ def delete(kind: str, item_id: int):
         conn.execute(f"DELETE FROM {kind} WHERE id = ?", (item_id,))
     return Response(status_code=204)
 
+
+# Individual overrides belong to one occurrence, not the master task. The
+# occurrence_date always identifies the original date, even after a drag move.
+def series_at(task:dict, key:str):
+    try:
+        target=date.fromisoformat(key)
+        first=date.fromisoformat(str(task["scheduled_at"])[:10])
+    except (TypeError,ValueError):
+        return False
+    if target<first or task.get("recurrence_until") and key>task["recurrence_until"]:
+        return False
+    rule=task["recurrence"]
+    if rule not in RECURRENCES-{"",}:
+        return False
+    if rule=="daily":return True
+    if rule=="weekly":return (target-first).days%7==0
+    if rule=="monthly":
+        import calendar
+        return target.day==min(first.day,calendar.monthrange(target.year,target.month)[1])
+    if rule=="yearly":
+        import calendar
+        day=28 if first.month==2 and first.day==29 and not calendar.isleap(target.year) else first.day
+        return target.month==first.month and target.day==day
+    return False
+
+def series_task(conn:sqlite3.Connection, task_id:int, day:str):
+    task=fetch_one(conn,"tasks",task_id)
+    if not series_at(task,day):
+        raise HTTPException(422,"Дата не относится к выбранной серии")
+    return task
+
+@app.put("/api/task-occurrences/{task_id}/{day}")
+def put_occurrence(task_id:int,day:str,payload:dict[str,Any]):
+    raw=payload.get("changes")
+    if not isinstance(raw,dict) or set(payload)!={"changes"} or set(raw)-OCCURRENCE_FIELDS:
+        raise HTTPException(422,"Некорректные изменения повторения")
+    changes=validate("tasks",raw.copy())
+    with connection() as conn:
+        series_task(conn,task_id,day)
+        # Merge sparse changes, preventing a second edit from losing an earlier one.
+        previous=conn.execute("SELECT changes FROM task_occurrences WHERE task_id=? AND occurrence_date=?",
+                              (task_id,day)).fetchone()
+        combined={**(json.loads(previous["changes"]) if previous else {}),**changes}
+        conn.execute("""INSERT INTO task_occurrences (task_id,occurrence_date,changes)
+                        VALUES (?,?,?) ON CONFLICT(task_id,occurrence_date)
+                        DO UPDATE SET changes=excluded.changes""",
+                     (task_id,day,json.dumps(combined,ensure_ascii=False)))
+        return {"task_id":task_id,"occurrence_date":day,"changes":combined}
+
+@app.delete("/api/task-occurrences/{task_id}/{day}",status_code=204)
+def reset_occurrence(task_id:int,day:str):
+    with connection() as conn:
+        series_task(conn,task_id,day)
+        conn.execute("DELETE FROM task_occurrences WHERE task_id=? AND occurrence_date=?",(task_id,day))
+    return Response(status_code=204)
+
+@app.post("/api/task-series/{task_id}/split",status_code=201)
+def split_series(task_id:int,payload:dict[str,Any]):
+    day=payload.get("occurrence_date")
+    raw=payload.get("changes",{})
+    if not isinstance(day,str) or not isinstance(raw,dict) or set(payload)-{"occurrence_date","changes"}:
+        raise HTTPException(422,"Некорректное разделение серии")
+    if set(raw)-FIELDS["tasks"]:
+        raise HTTPException(422,"Неизвестные поля серии")
+    changes=validate("tasks",raw.copy())
+    if "recurrence_until" in changes and changes["recurrence_until"] and changes["recurrence_until"]<day:
+        raise HTTPException(422,"Окончание серии раньше начала")
+    with connection() as conn:
+        original=series_task(conn,task_id,day)
+        if day==original["scheduled_at"][:10]:
+            raise HTTPException(422,"Для первого повторения редактируйте всю серию")
+        current=conn.execute("SELECT changes FROM task_occurrences WHERE task_id=? AND occurrence_date=?",
+                             (task_id,day)).fetchone()
+        existing=json.loads(current["changes"]) if current else {}
+        fields={field:original[field] for field in FIELDS["tasks"]}
+        fields.update({"scheduled_at":day+original["scheduled_at"][10:]})
+        fields.update(existing)
+        fields.update(changes)
+        # An occurrence's override may say done; a new series starts active.
+        if fields.get("status") in {"done","cancelled"} and "status" not in changes:
+            fields["status"]="planned"
+        fields=validate("tasks",fields,creating=True)
+        cols=", ".join(fields)
+        values=", ".join("?" for _ in fields)
+        try:
+            cur=conn.execute(f"INSERT INTO tasks ({cols}) VALUES ({values})",tuple(fields.values()))
+            new_id=cur.lastrowid
+            stop=(date.fromisoformat(day)-__import__("datetime").timedelta(days=1)).isoformat()
+            conn.execute("UPDATE tasks SET recurrence_until=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                         (stop,task_id))
+            conn.execute("""UPDATE task_occurrences SET task_id=?
+                            WHERE task_id=? AND occurrence_date>=?""",
+                         (new_id,task_id,day))
+            conn.execute("DELETE FROM task_occurrences WHERE task_id=? AND occurrence_date=?",(new_id,day))
+        except sqlite3.IntegrityError as exc:
+            sql_error(exc)
+        return fetch_one(conn,"tasks",new_id)
+
 @app.get("/api/export")
 def export():
     with connection() as conn:
@@ -294,6 +414,11 @@ def export():
                 for kind in FIELDS
             },
         }
+        payload["data"]["occurrences"]=[
+            {"task_id":r["task_id"],"occurrence_date":r["occurrence_date"],
+             "changes":json.loads(r["changes"])}
+            for r in conn.execute("SELECT * FROM task_occurrences ORDER BY occurrence_date")
+        ]
     return JSONResponse(payload, headers={"Content-Disposition": 'attachment; filename="personalmanagement-export.json"', "Cache-Control": "no-store"})
 
 @app.get("/{path:path}", include_in_schema=False)
