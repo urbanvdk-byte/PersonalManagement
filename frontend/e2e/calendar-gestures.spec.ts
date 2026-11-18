@@ -23,10 +23,13 @@ test('mouse moves a task by two hours and persists its new schedule',async({page
   const x=box!.x+Math.min(box!.width/2,35);
   const y=box!.y+box!.height/2;
   const before=await taskStart(page);
+  page.on('pageerror',error=>console.log('BROWSER ERROR',error.message));
+  console.log('MOVE INPUT',JSON.stringify({x,y,box,hit:await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.outerHTML.slice(0,350),{x,y})}));
   await page.mouse.move(x,y);
   await page.mouse.down();
   await page.mouse.move(x,y+82.67,{steps:12});
   await page.mouse.up();
+  console.log('MOVE RESULT',JSON.stringify(await page.evaluate(()=>({warning:document.querySelector('.error-banner')?.textContent,preview:document.querySelector('.calendar-gesture-status')?.textContent,dialog:document.querySelector('.drawer')?.textContent?.slice(0,130)}))));
   await expect.poll(()=>taskStart(page)).not.toBe(before);
   expect((await taskStart(page))?.slice(11,16)).toBe('12:00');
 });
