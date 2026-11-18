@@ -1,7 +1,7 @@
 name: Checks
 on:
   push:
-    branches: [feat/mvp-personal-management]
+    branches: [main, feat/github-pages-demo]
   pull_request:
     branches: [main]
 jobs:
@@ -28,7 +28,15 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --no-audit --no-fund
-      - run: npm run build
+      - name: Build backend-connected frontend
+        run: npm run build
+      - name: Build GitHub Pages demo
+        run: npm run build
+        env:
+          VITE_DEMO_MODE: 'true'
+          VITE_BASE_PATH: '/PersonalManagement/'
+      - name: Verify Pages asset paths
+        run: grep -q '/PersonalManagement/assets/' dist/index.html
   docker:
     runs-on: ubuntu-latest
     steps:

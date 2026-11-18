@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X } from 'lucide-react';
-import { api } from './api';
+import { api, isDemo } from './api';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Store, Task } from './types';
 
@@ -124,7 +124,7 @@ export default function App(){
    <div className="brand"><div className="brand-icon"><Target size={23}/></div><div><strong>PersonalManagement</strong><span>Мой центр управления</span></div></div>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
    <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{setPage(p.id);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
-   <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><a href="/api/export"><Download size={15}/> Выгрузить данные JSON</a></div>
+   <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
@@ -134,6 +134,7 @@ export default function App(){
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
    </header>
+   {isDemo&&<div className="demo-banner"><span><strong>Демонстрация GitHub Pages</strong> · Данные только в этом браузере, без синхронизации. Не вводите личную или конфиденциальную информацию.</span><button onClick={()=>{if(window.confirm('Сбросить демонстрационные записи?'))api.resetDemo().then(setData).catch(e=>setError(String(e)))}}>Сбросить демо</button></div>}
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
