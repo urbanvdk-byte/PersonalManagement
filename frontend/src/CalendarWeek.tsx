@@ -1,24 +1,41 @@
-import {useEffect,useRef,useState,type CSSProperties} from 'react';
+import {useEffect,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent} from 'react';
 import {dayKey} from './date';
 import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
-import type {Editing,Store} from './types';
+import {HOUR_HEIGHT,fromTime,movePreview,resizePreview,toScheduledAt,isPreviewChanged,type CalendarPreview,type GestureMode} from './calendarInteraction';
+import type {Editing,Store,Task} from './types';
 
-export const HOUR_HEIGHT=62/1.5;
 const START=0;
 const END=24;
+const LONG_PRESS_MS=420;
 const isOpen=(status:string)=>status!=='done'&&status!=='cancelled';
 
 type Props={
   start:Date;selection:DateSelection;store:Store;day:string;
   setDay:(date:string)=>void;edit:(item:Editing)=>void;slot:(date:Date)=>void;
+  updateTask:(task:Task,changes:Record<string,unknown>)=>Promise<void>;
+};
+type Gesture={
+  pointerId:number;task:Task;mode:GestureMode;
+  x:number;y:number;day:string;minute:number;duration:number;offsetMinutes:number;
+  active:boolean;moved:boolean;preview:CalendarPreview;
 };
 
-export default function CalendarWeek({start,selection,store,day,setDay,edit,slot}:Props){
+export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask}:Props){
  const days=selectedCalendarDays(start,selection);
  const hours=Array.from({length:END-START},(_,i)=>i+START);
  const [now,setNow]=useState(()=>new Date());
+ const [preview,setPreview]=useState<CalendarPreview|null>(null);
+ const [saving,setSaving]=useState(false);
  const scrollRef=useRef<HTMLDivElement|null>(null);
+ const gesture=useRef<Gesture|null>(null);
+ const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ const previewRef=useRef<CalendarPreview|null>(null);
+ const busy=useRef(false);
+
+ const clearTimer=()=>{if(timer.current!==null){clearTimeout(timer.current);timer.current=null;}};
+ const showPreview=(value:CalendarPreview|null)=>{previewRef.current=value;setPreview(value);};
+
  useEffect(()=>{
    const id=window.setInterval(()=>setNow(new Date()),30000);
    return ()=>window.clearInterval(id);
@@ -28,56 +45,220 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    const hour=new Date().getHours();
    scrollRef.current.scrollTop=Math.max(0,((hour>=7?hour-2:7)-START)*HOUR_HEIGHT);
  },[]);
+ useEffect(()=>()=>{if(timer.current!==null)clearTimeout(timer.current);},[]);
+
  const nowKey=dayKey(now);
  const nowMinutes=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
  const rangeOn=Boolean(selection.start&&selection.end);
  const columns:CSSProperties={gridTemplateColumns:'64px repeat('+days.length+', minmax(0,1fr))'};
  const innerWidth=Math.max(900,64+days.length*130);
- return <div ref={scrollRef} className="calendar-scroll"><div className="cal-inner" style={{minWidth:innerWidth}}>
-  <div className="cal-row cal-head" style={columns}><div className="rail-label">МЕСТН.</div>{days.map(d=>{
-    const key=dayKey(d);
-    return <button className={'day-head '+(day===key?'selected ':'')+(rangeOn?'in-range':'')} key={key} onClick={()=>setDay(key)}><small>{d.toLocaleDateString('ru-RU',{weekday:'short'}).toUpperCase()}</small><strong className={key===nowKey?'today':''}>{d.getDate()}</strong></button>;
-  })}</div>
-  <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}>{store.tasks.filter(t=>isOpen(t.status)&&!t.scheduled_at&&t.due_at?.startsWith(dayKey(d))).slice(0,3).map(t=><button key={t.id} onClick={()=>edit({kind:'tasks',record:t})}>{t.title}</button>)}</div>)}</div>
-  <div className="cal-row cal-body" style={columns}>
-   <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
-   {days.map(d=>{
-    const key=dayKey(d);
-    const tasks=store.tasks.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
-      id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,
-      priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
-      emoji:t.area_id?areaEmoji(store.areas.find(area=>area.id===t.area_id)?.emoji):null,record:t
-    }));
-    const events=store.events.filter(e=>e.starts_at.startsWith(key)).map(e=>({
-      id:e.id,kind:'events' as const,title:e.title,start:e.starts_at,
-      minutes:Math.max(15,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),
-      priorityColor:e.color,fill:e.color,emoji:null,record:e
-    }));
-    return <div key={key} className={'day-track '+(day===key?'active ':'')+(rangeOn?'in-range':'')}
-      style={{height:(END-START)*HOUR_HEIGHT,'--hour-height':HOUR_HEIGHT+'px'} as CSSProperties}
-      onClick={e=>{
-        if(e.target!==e.currentTarget)return;
-        const rect=e.currentTarget.getBoundingClientRect();
-        const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));
-        const date=new Date(d);date.setHours(START,minute,0,0);slot(date);
-      }}>
-      {[...tasks,...events].map(b=>{
-        const t=new Date(b.start);const minutes=t.getHours()*60+t.getMinutes();
-        if(minutes>=END*60||minutes+b.minutes<=START*60)return null;
-        const top=Math.max(0,(minutes-START*60)*HOUR_HEIGHT/60);
-        const height=Math.max(18,Math.min(b.minutes*HOUR_HEIGHT/60,(END-START)*HOUR_HEIGHT-top));
-        return <button key={b.kind+b.id} className={'cal-item '+(b.kind==='tasks'?'task-block':'event-block')+(b.kind==='tasks'&&b.minutes<60?' compact-task':'')}
-          style={{top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35'}}
-          onClick={e=>{e.stopPropagation();edit({kind:b.kind,record:b.record})}}
-          title={b.title+' · '+b.start.slice(11,16)} aria-label={b.title+' · '+b.start.slice(11,16)}>
-          <strong>{b.title}</strong>
-          {!(b.kind==='tasks'&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
-          {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
-        </button>;
-      })}
-      {key===nowKey&&<div className="now-line" style={{top:nowMinutes*HOUR_HEIGHT/60}} aria-label={'Текущее время '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')}/>}
-    </div>;
-   })}
+
+ function trackAt(x:number):{key:string;rect:DOMRect}|null{
+   const tracks=scrollRef.current?.querySelectorAll<HTMLElement>('[data-calendar-day]');
+   if(!tracks?.length)return null;
+   let best:{key:string;rect:DOMRect;distance:number}|null=null;
+   tracks.forEach(node=>{
+     const rect=node.getBoundingClientRect();
+     const distance=x<rect.left?rect.left-x:x>rect.right?x-rect.right:0;
+     if(!best||distance<best.distance)best={key:node.dataset.calendarDay!,rect,distance};
+   });
+   if(!best)return null;
+   const selected=best as {key:string;rect:DOMRect;distance:number};
+   return {key:selected.key,rect:selected.rect};
+ }
+ function autoScroll(x:number,y:number){
+   const scroller=scrollRef.current;
+   if(!scroller)return;
+   const box=scroller.getBoundingClientRect();
+   const edge=35;
+   if(y<box.top+edge)scroller.scrollTop-=14;
+   else if(y>box.bottom-edge)scroller.scrollTop+=14;
+   if(x<box.left+edge)scroller.scrollLeft-=18;
+   else if(x>box.right-edge)scroller.scrollLeft+=18;
+ }
+ function project(g:Gesture,x:number,y:number):CalendarPreview{
+   if(g.mode==='move'){
+     const target=trackAt(x);
+     if(!target)return g.preview;
+     const pointerMinute=(y-target.rect.top)/HOUR_HEIGHT*60;
+     return movePreview(g.task.id,target.key,pointerMinute,g.offsetMinutes,g.duration);
+   }
+   const delta=(y-g.y)/HOUR_HEIGHT*60;
+   return resizePreview(g.task.id,g.day,g.minute,g.duration,g.mode,delta);
+ }
+ function press(e:ReactPointerEvent<HTMLButtonElement>,task:Task,mode:GestureMode){
+   if(busy.current||e.button!==0||!task.scheduled_at)return;
+   e.stopPropagation();
+   e.preventDefault();
+   clearTimer();
+   const minute=fromTime(task.scheduled_at);
+   const rect=e.currentTarget.getBoundingClientRect();
+   const offsetMinutes=Math.max(0,Math.min(task.duration_minutes,(e.clientY-rect.top)/HOUR_HEIGHT*60));
+   const original:CalendarPreview={
+     taskId:task.id,day:task.scheduled_at.slice(0,10),minute,
+     duration:task.duration_minutes,mode
+   };
+   gesture.current={
+     pointerId:e.pointerId,task,mode,x:e.clientX,y:e.clientY,
+     day:original.day,minute,duration:task.duration_minutes,offsetMinutes,
+     active:false,moved:false,preview:original
+   };
+   e.currentTarget.setPointerCapture(e.pointerId);
+   if(e.pointerType==='touch'||e.pointerType==='pen'){
+     const id=e.pointerId;
+     timer.current=setTimeout(()=>{
+       const g=gesture.current;
+       if(g?.pointerId!==id)return;
+       g.active=true;
+       showPreview(g.preview);
+       timer.current=null;
+     },LONG_PRESS_MS);
+   }
+ }
+ function move(e:ReactPointerEvent<HTMLButtonElement>){
+   const g=gesture.current;
+   if(!g||g.pointerId!==e.pointerId)return;
+   e.stopPropagation();
+   const distance=Math.hypot(e.clientX-g.x,e.clientY-g.y);
+   if(!g.active){
+     if(e.pointerType==='mouse'&&distance>=5){
+       g.active=true;clearTimer();
+     }else if((e.pointerType==='touch'||e.pointerType==='pen')&&distance>12){
+       // A swipe before the long press is not a calendar edit.
+       clearTimer();gesture.current=null;showPreview(null);
+       if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
+       return;
+     }else return;
+   }
+   if(distance>3)g.moved=true;
+   if(!g.moved)return;
+   e.preventDefault();
+   autoScroll(e.clientX,e.clientY);
+   const next=project(g,e.clientX,e.clientY);
+   g.preview=next;
+   showPreview(next);
+ }
+ async function release(e:ReactPointerEvent<HTMLButtonElement>){
+   const g=gesture.current;
+   if(!g||g.pointerId!==e.pointerId)return;
+   e.stopPropagation();e.preventDefault();
+   clearTimer();
+   gesture.current=null;
+   if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
+   if(!g.active){
+     edit({kind:'tasks',record:g.task});
+     return;
+   }
+   const result=g.moved?project(g,e.clientX,e.clientY):g.preview;
+   if(!g.moved||!isPreviewChanged(g.day,g.minute,g.duration,result)){
+     showPreview(null);
+     return;
+   }
+   showPreview(result);
+   const updates:Record<string,unknown>={};
+   if(g.mode==='move'||g.mode==='resize-start'){
+     updates.scheduled_at=toScheduledAt(result.day,result.minute);
+   }
+   if(g.mode!=='move'||result.duration!==g.duration){
+     updates.duration_minutes=result.duration;
+   }
+   busy.current=true;setSaving(true);
+   try{
+     await updateTask(g.task,updates);
+   }finally{
+     busy.current=false;setSaving(false);showPreview(null);
+   }
+ }
+ function cancel(e:ReactPointerEvent<HTMLButtonElement>){
+   if(gesture.current?.pointerId!==e.pointerId)return;
+   clearTimer();gesture.current=null;showPreview(null);
+ }
+ return <div ref={scrollRef} className="calendar-scroll" aria-label="Календарная сетка: перетаскивайте задачи или меняйте длительность за край">
+  <div className="cal-inner" style={{minWidth:innerWidth}}>
+   <div className="cal-row cal-head" style={columns}><div className="rail-label">МЕСТН.</div>{days.map(d=>{
+     const key=dayKey(d);
+     return <button className={'day-head '+(day===key?'selected ':'')+(rangeOn?'in-range':'')} key={key} onClick={()=>setDay(key)}><small>{d.toLocaleDateString('ru-RU',{weekday:'short'}).toUpperCase()}</small><strong className={key===nowKey?'today':''}>{d.getDate()}</strong></button>;
+   })}</div>
+   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}>{store.tasks.filter(t=>isOpen(t.status)&&!t.scheduled_at&&t.due_at?.startsWith(dayKey(d))).slice(0,3).map(t=><button key={t.id} onClick={()=>edit({kind:'tasks',record:t})}>{t.title}</button>)}</div>)}</div>
+   <div className="cal-row cal-body" style={columns}>
+    <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
+    {days.map(d=>{
+      const key=dayKey(d);
+      const tasks=store.tasks.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
+        id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,
+        priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
+        emoji:t.area_id?areaEmoji(store.areas.find(a=>a.id===t.area_id)?.emoji):null,record:t
+      }));
+      const events=store.events.filter(e=>e.starts_at.startsWith(key)).map(e=>({
+        id:e.id,kind:'events' as const,title:e.title,start:e.starts_at,
+        minutes:Math.max(15,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),
+        priorityColor:e.color,fill:e.color,emoji:null,record:e
+      }));
+      const pending=preview?.day===key?store.tasks.find(t=>t.id===preview.taskId):null;
+      return <div key={key} data-calendar-day={key}
+        className={'day-track '+(day===key?'active ':'')+(rangeOn?'in-range':'')+(pending?' gesture-target':'')}
+        style={{height:(END-START)*HOUR_HEIGHT,'--hour-height':HOUR_HEIGHT+'px'} as CSSProperties}
+        onClick={e=>{
+          if(e.target!==e.currentTarget)return;
+          const rect=e.currentTarget.getBoundingClientRect();
+          const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));
+          const date=new Date(d);date.setHours(START,minute,0,0);slot(date);
+        }}>
+        {[...tasks,...events].map(b=>{
+          const t=new Date(b.start);const minute=t.getHours()*60+t.getMinutes();
+          if(minute>=END*60||minute+b.minutes<=START*60)return null;
+          const top=Math.max(0,(minute-START*60)*HOUR_HEIGHT/60);
+          const height=Math.max(18,Math.min(b.minutes*HOUR_HEIGHT/60,(END-START)*HOUR_HEIGHT-top));
+          const task=b.kind==='tasks';
+          const gestureTask=task&&preview?.taskId===b.id;
+          return <button key={b.kind+b.id}
+            className={'cal-item '+(task?'task-block':'event-block')+(task&&b.minutes<60?' compact-task':'')+(gestureTask?' gesture-source':'')}
+            style={{top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35'}}
+            onPointerDown={task?e=>{
+              const side=(e.target as HTMLElement).closest<HTMLElement>('[data-resize]')?.dataset.resize;
+              const mode:GestureMode=side==='start'?'resize-start':side==='end'?'resize-end':'move';
+              press(e,b.record as Task,mode);
+            }:undefined}
+            onPointerMove={task?move:undefined}
+            onPointerUp={task?e=>{void release(e).catch(()=>{showPreview(null);busy.current=false;setSaving(false);})}:undefined}
+            onPointerCancel={task?cancel:undefined}
+            onLostPointerCapture={task?e=>{if(gesture.current?.pointerId===e.pointerId)cancel(e)}:undefined}
+            onClick={e=>{
+              e.stopPropagation();
+              if(task){if(e.detail===0)edit({kind:'tasks',record:b.record as Task});}
+              else edit({kind:'events',record:b.record});
+            }}
+            title={b.title+' · '+b.start.slice(11,16)}
+            aria-label={b.title+' · '+b.start.slice(11,16)}>
+            <strong>{b.title}</strong>
+            {!(task&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
+            {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
+            {task&&<>
+              <span className="calendar-resize-edge top-edge" data-resize="start" aria-hidden="true"/>
+              <span className="calendar-resize-edge bottom-edge" data-resize="end" aria-hidden="true"/>
+            </>}
+          </button>;
+        })}
+        {pending&&preview&&<div className={'task-preview '+(preview.duration<60?'compact-task':'')}
+          style={{
+            top:preview.minute*HOUR_HEIGHT/60,
+            height:Math.max(18,preview.duration*HOUR_HEIGHT/60),
+            borderLeftColor:PRIORITY_COLORS[pending.priority-1]||PRIORITY_COLORS[3],
+            backgroundColor:taskColor(pending.color)+'a8'
+          }} aria-hidden="true">
+          <strong>{pending.title}</strong>
+          <small>{toScheduledAt(key,preview.minute).slice(11,16)} · {preview.duration} мин</small>
+          {pending.area_id&&<span className="cal-area-emoji">{areaEmoji(store.areas.find(a=>a.id===pending.area_id)?.emoji)}</span>}
+        </div>}
+        {key===nowKey&&<div className="now-line" style={{top:nowMinutes*HOUR_HEIGHT/60}}
+          aria-label={'Текущее время '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')}/>}
+      </div>;
+    })}
+   </div>
   </div>
- </div></div>;
+  {(preview||saving)&&<div className="calendar-gesture-status" role="status">
+    {saving?'Сохраняю…':preview?.mode==='move'?'Перенос: '+preview.day+' '+toScheduledAt(preview.day,preview.minute).slice(11,16):
+      'Длительность: '+preview?.duration+' минут'}
+  </div>}
+ </div>;
 }

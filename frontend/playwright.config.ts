@@ -1,0 +1,20 @@
+import {defineConfig} from '@playwright/test';
+
+export default defineConfig({
+  testDir:'./e2e',
+  timeout:30000,
+  expect:{timeout:10000},
+  use:{
+    baseURL:'http://127.0.0.1:5173',
+    browserName:'chromium',
+    headless:true,
+    viewport:{width:1450,height:850}
+  },
+  webServer:{
+    command:'npm run dev -- --port 5173 --strictPort',
+    url:'http://127.0.0.1:5173',
+    reuseExistingServer:false,
+    env:{VITE_DEMO_MODE:'true',VITE_BASE_PATH:'/'},
+    timeout:60000
+  }
+});

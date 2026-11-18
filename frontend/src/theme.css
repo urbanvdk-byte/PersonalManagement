@@ -683,3 +683,97 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   border-color:#dbe5f3;
 }
 .form-actions .primary-btn:disabled{opacity:.48;box-shadow:none;transform:none}
+
+/* Calendar stage 2: direct task manipulation with mouse and touch. */
+.cal-item.task-block{
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+  cursor:grab;
+}
+.cal-item.task-block:active{cursor:grabbing}
+.cal-item.task-block.gesture-source{opacity:.33;box-shadow:none}
+.day-track.gesture-target{background-color:rgba(255,160,69,.10)}
+.calendar-resize-edge{
+  position:absolute;
+  left:6px;
+  right:21px;
+  height:7px;
+  display:block;
+  z-index:5;
+  touch-action:none;
+  cursor:ns-resize;
+}
+.calendar-resize-edge.top-edge{top:-2px}
+.calendar-resize-edge.bottom-edge{bottom:-2px}
+.calendar-resize-edge::after{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:3px;
+  width:25px;
+  max-width:60%;
+  height:2px;
+  background:#173a75;
+  border-radius:2px;
+  opacity:0;
+  transform:translateX(-50%);
+  transition:opacity .15s;
+}
+.cal-item.task-block:hover .calendar-resize-edge::after,
+.cal-item.task-block:focus-visible .calendar-resize-edge::after{opacity:.5}
+.task-preview{
+  position:absolute;
+  left:3px;
+  right:3px;
+  width:calc(100% - 6px);
+  padding:3px 20px 2px 6px;
+  border:2px dashed #143f88;
+  border-left:5px solid #ff963b;
+  border-radius:6px;
+  z-index:10;
+  box-shadow:0 8px 24px rgba(9,48,119,.25);
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  justify-content:center;
+  overflow:hidden;
+  color:#102b58;
+  pointer-events:none;
+}
+.task-preview strong{
+  font-size:10px;
+  line-height:1.1;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.task-preview small{font-size:9px;white-space:nowrap}
+.task-preview.compact-task small{display:none}
+.calendar-gesture-status{
+  position:sticky;
+  bottom:12px;
+  left:12px;
+  margin:0 0 10px 12px;
+  width:max-content;
+  max-width:calc(100% - 24px);
+  z-index:20;
+  padding:9px 13px;
+  border-radius:11px;
+  background:#09318d;
+  color:#fff;
+  box-shadow:0 5px 19px rgba(9,49,141,.24);
+  font-weight:700;
+  font-size:12px;
+  pointer-events:none;
+}
+.entity-card .area-emoji{font-size:25px}
+@media(pointer:coarse){
+  .calendar-resize-edge{
+    height:9px;
+    right:19px;
+  }
+  .calendar-resize-edge.top-edge{top:-3px}
+  .calendar-resize-edge.bottom-edge{bottom:-3px}
+  .calendar-resize-edge::after{opacity:.35}
+}
