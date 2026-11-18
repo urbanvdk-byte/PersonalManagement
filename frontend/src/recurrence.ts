@@ -1,4 +1,4 @@
-import {addDays,dateTimeLocal,dayKey,makeDay} from './date';
+import {addDays,dateTimeLocal,dayKey,makeDay} from './date.ts';
 import type {Task,TaskOccurrence} from './types';
 
 export const RECURRENCES={ '':'Не повторяется',daily:'Каждый день',weekly:'Каждую неделю',monthly:'Каждый месяц',yearly:'Каждый год'} as const;
@@ -54,7 +54,7 @@ export function expandTasks(tasks:readonly Task[],occurrences:readonly TaskOccur
    const exception=exceptions.get(task.id+'@'+key);
    if(exception?.changes?.status==='cancelled'||exception?.changes?.status==='done')continue;
    const view=makeInstance(task,key,exception?.changes||{});
-   if(view.scheduled_at?.slice(0,10)>=start&&view.scheduled_at.slice(0,10)<=end)result.push(view);
+   if(view.scheduled_at&&view.scheduled_at.slice(0,10)>=start&&view.scheduled_at.slice(0,10)<=end)result.push(view);
   }
   // A moved occurrence must appear at the new date even when its original date
   // falls outside the visible range. Avoid duplicate from the loop above.
