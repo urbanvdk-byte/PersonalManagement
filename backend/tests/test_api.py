@@ -44,3 +44,37 @@ def test_validation(tmp_path, monkeypatch):
         assert client.post("/api/tasks", headers=auth(), json={"title": "X", "oops": True}).status_code == 422
         assert client.post("/api/tasks", headers=auth(), json={"title": "X", "area_id": 999}).status_code == 409
         assert client.post("/api/events", headers=auth(), json={"title": "Встреча", "starts_at": "2026-11-19T12:00", "ends_at": "2026-11-19T11:00"}).status_code == 422
+
+
+def test_task_colors_and_area_emoji(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "colors.db"))
+    with TestClient(app) as client:
+        area = client.post("/api/areas", headers=auth(), json={"title": "Работа", "emoji": "💼"}).json()
+        assert area["emoji"] == "💼"
+        task = client.post("/api/tasks", headers=auth(), json={"title": "Проверить", "area_id": area["id"], "color": "#ff963b", "priority": 1}).json()
+        assert task["color"] == "#ff963b"
+        assert client.patch(f'/api/tasks/{task["id"]}', headers=auth(), json={"color": "#9463d6"}).json()["color"] == "#9463d6"
+        assert client.post("/api/tasks", headers=auth(), json={"title": "Нет", "color": "#123456"}).status_code == 422
+        assert client.patch(f'/api/areas/{area["id"]}', headers=auth(), json={"emoji": "🏠"}).json()["emoji"] == "🏠"
+
+
+def test_non_destructive_upgrade_existing_schema(tmp_path, monkeypatch):
+    import sqlite3
+    from app import SCHEMA
+    path = tmp_path / "existing.db"
+    legacy = SCHEMA.replace("emoji TEXT NOT NULL DEFAULT '📁',", "").replace("  color TEXT NOT NULL DEFAULT '#3466d9',", "")
+    with sqlite3.connect(path) as conn:
+        conn.executescript(legacy)
+        conn.execute("INSERT INTO areas (title) VALUES (?)", ("Сохранённое направление",))
+        conn.execute("INSERT INTO tasks (title) VALUES (?)", ("Сохранённая задача",))
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH", str(path))
+    with TestClient(app) as client:
+        payload = client.get("/api/bootstrap", headers=auth()).json()
+        assert payload["areas"][0]["title"] == "Сохранённое направление"
+        assert payload["areas"][0]["emoji"] == "📁"
+        assert payload["tasks"][0]["title"] == "Сохранённая задача"
+        assert payload["tasks"][0]["color"] == "#3466d9"
+    with TestClient(app) as client:
+        assert client.get("/api/bootstrap", headers=auth()).status_code == 200

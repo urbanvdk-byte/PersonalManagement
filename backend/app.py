@@ -21,6 +21,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS areas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#4689db',
+  emoji TEXT NOT NULL DEFAULT '📁',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS projects (
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   scheduled_at TEXT, due_at TEXT,
   duration_minutes INTEGER NOT NULL DEFAULT 60,
   recurrence TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '#3466d9',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -76,14 +78,15 @@ CREATE INDEX IF NOT EXISTS idx_events_starts ON events(starts_at);
 """
 
 FIELDS = {
-    "areas": {"title", "color"},
+    "areas": {"title", "color", "emoji"},
     "projects": {"area_id", "title", "description", "status", "start_date", "due_date"},
     "goals": {"area_id", "project_id", "title", "description", "period_start", "period_end", "start_value", "target_value", "current_value", "unit"},
-    "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence"},
+    "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "color"},
     "events": {"area_id", "project_id", "title", "notes", "starts_at", "ends_at", "color"},
 }
 STATUS = {"inbox", "planned", "in_progress", "waiting", "done", "someday", "cancelled"}
 PROJECT_STATUS = {"active", "paused", "done", "archived"}
+TASK_COLORS = {"#3466d9", "#16a2dc", "#12aaa1", "#39aa6f", "#e4b636", "#ff963b", "#e7635e", "#9463d6"}
 DATETIME_KEYS = {"scheduled_at", "due_at", "starts_at", "ends_at"}
 DATE_KEYS = {"start_date", "due_date", "period_start", "period_end"}
 ID_KEYS = {"area_id", "project_id", "goal_id", "parent_id"}
@@ -114,6 +117,14 @@ def setup() -> None:
     with connection() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        # Non-destructive migrations for existing data.
+        for table, column, definition in (
+            ("areas", "emoji", "TEXT NOT NULL DEFAULT '📁'"),
+            ("tasks", "color", "TEXT NOT NULL DEFAULT '#3466d9'"),
+        ):
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 @app.on_event("startup")
 def startup() -> None:
@@ -192,7 +203,12 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
                     date.fromisoformat(value)
                 except ValueError:
                     raise HTTPException(422, f"Некорректная дата {key}")
+        elif key == "emoji":
+            if not isinstance(value, str) or not value.strip() or len(value) > 32:
+                raise HTTPException(422, "Укажите emoji длиной до 32 символов")
         elif key == "color":
+            if kind == "tasks" and (not isinstance(value, str) or value.lower() not in TASK_COLORS):
+                raise HTTPException(422, "Выберите один из 8 доступных цветов задачи")
             if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
                 raise HTTPException(422, "Цвет должен иметь формат #RRGGBB")
     if kind == "events" and creating and (not payload.get("starts_at") or not payload.get("ends_at")):
