@@ -777,3 +777,18 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .calendar-resize-edge.bottom-edge{bottom:-3px}
   .calendar-resize-edge::after{opacity:.35}
 }
+
+/* Overlapping appointments use independent horizontal lanes, not z-index stacking.
+   Inline left/width are calculated by calendarLayout.ts for each collision group. */
+.day-track .cal-item{
+  box-sizing:border-box;
+  min-width:0;
+  max-width:none;
+}
+.day-track .cal-item strong{
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.day-track .cal-item.task-block .cal-area-emoji{
+  pointer-events:none;
+}
