@@ -1,5 +1,6 @@
 import type {Kind,Store} from './types';
 import {addDays,dateTimeLocal,dayKey,weekStart} from './date';
+import {DEFAULT_TASK_COLOR} from './taskPalette';
 
 // GitHub Pages has no backend. This isolated adapter stores only DEMO data in this browser.
 // The production build keeps using the FastAPI + SQLite endpoints unchanged.
@@ -25,9 +26,9 @@ function initialDemo():Store{
   const goalEnd=dayKey(new Date(now.getFullYear(),now.getMonth()+1,0));
   return {
     areas:[
-      {id:1,title:'Работа',color:'#368be5',created_at},
-      {id:2,title:'Здоровье',color:'#22a879',created_at},
-      {id:3,title:'Дом и быт',color:'#f0b23c',created_at}
+      {id:1,title:'Работа',color:'#368be5',emoji:'💼',created_at},
+      {id:2,title:'Здоровье',color:'#22a879',emoji:'🏃',created_at},
+      {id:3,title:'Дом и быт',color:'#f0b23c',emoji:'🏠',created_at}
     ],
     projects:[
       {id:1,title:'Демонстрационный проект',area_id:1,description:'Пример связи проекта с задачами и целью',status:'active',start_date:today,due_date:dayKey(addDays(mon,18)),created_at}
@@ -37,10 +38,10 @@ function initialDemo():Store{
       {id:2,title:'Выполнить 5 шагов учебного проекта',area_id:1,project_id:1,description:'Цель для демонстрационного проекта',period_start:today,period_end:dayKey(addDays(mon,18)),start_value:0,target_value:5,current_value:1,unit:'шагов',created_at}
     ],
     tasks:[
-      {id:1,title:'Обсудить план проекта',area_id:1,project_id:1,goal_id:2,parent_id:null,notes:'Вымышленная задача для тестирования интерфейса',priority:1,important:1,urgent:1,status:'planned',scheduled_at:slot(now,10),due_at:slot(addDays(now,1),18),duration_minutes:60,recurrence:'',created_at,updated_at:created_at},
-      {id:2,title:'Провести тренировку',area_id:2,project_id:null,goal_id:1,parent_id:null,notes:'Пример задачи из направления Здоровье',priority:2,important:1,urgent:0,status:'planned',scheduled_at:slot(addDays(now,1),18),due_at:null,duration_minutes:60,recurrence:'',created_at,updated_at:created_at},
-      {id:3,title:'Разобрать покупки на неделю',area_id:3,project_id:null,goal_id:null,parent_id:null,notes:'Пример повседневного дела',priority:3,important:0,urgent:1,status:'inbox',scheduled_at:null,due_at:slot(addDays(now,2),17),duration_minutes:30,recurrence:'',created_at,updated_at:created_at},
-      {id:4,title:'Идея для будущего проекта',area_id:1,project_id:null,goal_id:null,parent_id:null,notes:'Сохранено на потом',priority:4,important:0,urgent:0,status:'someday',scheduled_at:null,due_at:null,duration_minutes:30,recurrence:'',created_at,updated_at:created_at}
+      {id:1,title:'Обсудить план проекта',area_id:1,project_id:1,goal_id:2,parent_id:null,notes:'Вымышленная задача для тестирования интерфейса',priority:1,important:1,urgent:1,status:'planned',scheduled_at:slot(now,10),due_at:slot(addDays(now,1),18),duration_minutes:60,recurrence:'',color:DEFAULT_TASK_COLOR,created_at,updated_at:created_at},
+      {id:2,title:'Провести тренировку',area_id:2,project_id:null,goal_id:1,parent_id:null,notes:'Пример задачи из направления Здоровье',priority:2,important:1,urgent:0,status:'planned',scheduled_at:slot(addDays(now,1),18),due_at:null,duration_minutes:60,recurrence:'',color:'#39aa6f',created_at,updated_at:created_at},
+      {id:3,title:'Разобрать покупки на неделю',area_id:3,project_id:null,goal_id:null,parent_id:null,notes:'Пример повседневного дела',priority:3,important:0,urgent:1,status:'inbox',scheduled_at:null,due_at:slot(addDays(now,2),17),duration_minutes:30,recurrence:'',color:'#ff963b',created_at,updated_at:created_at},
+      {id:4,title:'Идея для будущего проекта',area_id:1,project_id:null,goal_id:null,parent_id:null,notes:'Сохранено на потом',priority:4,important:0,urgent:0,status:'someday',scheduled_at:null,due_at:null,duration_minutes:30,recurrence:'',color:'#9463d6',created_at,updated_at:created_at}
     ],
     events:[
       {id:1,title:'Тестовая встреча',area_id:1,project_id:1,notes:'Вымышленное событие',starts_at:slot(now,14),ends_at:slot(now,15),color:'#f0b23c',created_at},
@@ -66,10 +67,10 @@ function loadDemo():Store{
 function storeDemo(data:Store){localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}
 type Row=Record<string,unknown>;
 const defaults:Record<Kind,Row>={
-  areas:{color:'#4689db'},
+  areas:{color:'#4689db',emoji:'📁'},
   projects:{area_id:null,description:'',status:'active',start_date:null,due_date:null},
   goals:{area_id:null,project_id:null,description:'',period_start:null,period_end:null,start_value:0,target_value:1,current_value:0,unit:''},
-  tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:''},
+  tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',color:DEFAULT_TASK_COLOR},
   events:{area_id:null,project_id:null,notes:'',color:'#f3bb28'}
 };
 async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{

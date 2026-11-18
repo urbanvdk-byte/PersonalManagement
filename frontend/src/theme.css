@@ -506,3 +506,101 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .mini-day{height:36px;font-size:12px}
   .mini-day.date-active .mini-day-number{width:31px;height:31px}
 }
+
+/* Stage 1 calendar interactions: native pointer-based date range and 8 presets. */
+.mini-month-grid{
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+  cursor:crosshair;
+}
+.mini-day{touch-action:none;user-select:none;-webkit-user-select:none}
+.mini-day.range-active{background:#ffd6aa;color:#873d05;border-radius:0}
+.mini-day.range-start{border-radius:10px 0 0 10px}
+.mini-day.range-end{border-radius:0 10px 10px 0}
+.mini-day.range-start.range-end{border-radius:10px}
+.mini-day.range-active .mini-day-number{font-weight:750}
+.mini-day.date-active .mini-day-number{background:#ff963b;color:#092f80;position:relative;z-index:1}
+.mini-month-grid .mini-day:hover{box-shadow:inset 0 0 0 1px #ff963b}
+.calendar-scroll{overscroll-behavior:contain}
+.day-track{
+  /* 62px / 1.5 = 41.333px per hour, same as the JS geometry. */
+  background-image:linear-gradient(to bottom,transparent calc(var(--hour-height,41.3333px) - 1px),#e7edf8 calc(var(--hour-height,41.3333px) - 1px),#e7edf8 var(--hour-height,41.3333px));
+  background-size:100% var(--hour-height,41.3333px);
+}
+.day-track.in-range{background-color:#fff7ed}
+.day-track.in-range.active{background-color:#fff1df}
+.day-head.in-range{background:#fff1dd;border-bottom:3px solid #ff963b}
+.day-head.in-range.selected{background:#ffe2be}
+.allday-cell.in-range{background:#fff5e9}
+.time-rail span{font-variant-numeric:tabular-nums;font-size:10px}
+.cal-item{border-left-width:5px;min-height:18px;white-space:normal}
+.cal-item.task-block{padding:3px 23px 2px 5px}
+.cal-item.task-block strong{font-size:10px;line-height:1.15;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.cal-item.task-block small{font-size:9px;line-height:1.05}
+.cal-item.event-block{padding:3px 5px}
+.cal-area-emoji{
+  position:absolute;
+  top:3px;right:4px;
+  width:17px;height:17px;border-radius:5px;
+  background:rgba(255,255,255,.85);
+  display:grid;place-items:center;
+  font-size:12px;line-height:1;
+  border:1px solid rgba(18,40,90,.08);
+  pointer-events:none;
+}
+.now-line{
+  position:absolute;left:0;right:0;
+  z-index:8;
+  height:2px;
+  background:#e43235;
+  box-shadow:0 1px 3px rgba(228,50,53,.18);
+  pointer-events:none;
+}
+.now-line::before{
+  content:"";
+  position:absolute;left:-7px;top:-5px;
+  width:12px;height:12px;
+  border-radius:50%;
+  background:#e43235;
+  box-shadow:0 0 0 2px #fff;
+}
+.task-color-choices{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:7px}
+.task-color-choice{
+  min-width:0;
+  height:34px;
+  border-radius:9px;
+  border:2px solid transparent;
+  display:grid;place-items:center;
+  color:#fff;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.05);
+}
+.task-color-choice.chosen{
+  outline:2px solid #0a317c;
+  outline-offset:2px;
+  box-shadow:0 3px 9px rgba(10,41,94,.18);
+}
+.task-color-choice:hover{transform:translateY(-2px)}
+.palette-hint{font-size:11px;line-height:1.5;color:#7b8da9}
+.emoji-choices{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:7px}
+.emoji-choice{
+  border:1px solid #dce6f5;border-radius:9px;
+  min-width:0;height:34px;
+  background:#fff;
+  font-size:20px;
+  display:grid;place-items:center;
+}
+.emoji-choice:hover{background:#fff4e7;border-color:#ffba70}
+.emoji-choice.chosen{border-color:#ff963b;background:#fff1dc;box-shadow:0 0 0 1px #ff963b}
+.area-emoji{
+  display:grid;place-items:center;
+  border-radius:9px;
+  font-size:19px;
+  box-shadow:0 3px 7px rgba(7,35,83,.12);
+}
+@media(max-width:760px){
+  .task-color-choices,.emoji-choices{gap:5px}
+  .task-color-choice,.emoji-choice{height:34px;border-radius:8px}
+  .cal-item.task-block{padding-right:21px}
+  .cal-area-emoji{right:2px;top:2px}
+}

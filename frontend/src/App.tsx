@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X } from 'lucide-react';
 import { api, isDemo } from './api';
 import MiniMonth from './MiniMonth';
-import {selectMiniDate,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
+import CalendarWeek from './CalendarWeek';
+import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
+import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Store, Task } from './types';
 
@@ -16,7 +18,6 @@ const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
 const statuses:Record<string,string>={inbox:'Входящие',planned:'Запланировано',in_progress:'В работе',waiting:'Ожидаю',done:'Выполнено',someday:'Когда-нибудь',cancelled:'Отменено'};
 const projectStatuses:Record<string,string>={active:'Активен',paused:'Пауза',done:'Завершён',archived:'Архив'};
 const labels:Record<Kind,string>={areas:'направление',projects:'проект',goals:'цель',tasks:'задачу',events:'событие'};
-const colors=['#e25c55','#ff9b3e','#336dd7','#8b9bb0'];
 const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
 function percent(goal:Goal){const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
@@ -34,7 +35,11 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
  const number=(key:string,label:string,defaultValue=0)=><label className="form-field"><span>{label}</span><input type="number" step={kind==='goals'?'any':'1'} min={key==='duration_minutes'?1:undefined} value={Number(form[key]??defaultValue)} onChange={e=>set(key,Number(e.target.value))}/></label>;
  async function submit(e:FormEvent){e.preventDefault();setBusy(true);setError('');
   const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;
-  if(kind==='tasks')Object.assign(payload,priorityFlags(Number(payload.priority??4)));
+  if(kind==='tasks'){
+    Object.assign(payload,priorityFlags(Number(payload.priority??4)));
+    payload.color=taskColor(String(payload.color??DEFAULT_TASK_COLOR));
+  }
+  if(kind==='areas')payload.emoji=areaEmoji(String(payload.emoji??'📁'));
   try{await save(kind,payload,record?.id);close()}catch(err){setError(err instanceof Error?err.message:String(err))}finally{setBusy(false)}
  }
  async function doRemove(){if(!record||!window.confirm('Удалить запись без возможности отмены?'))return;setBusy(true);
@@ -44,7 +49,15 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
   <div className="drawer-head"><div><small>{record?'РЕДАКТИРОВАНИЕ':'НОВАЯ ЗАПИСЬ'}</small><h2>{record?'Изменить':'Добавить'} {labels[kind]}</h2></div><button className="icon-btn" onClick={close} aria-label="Закрыть"><X size={20}/></button></div>
   <form onSubmit={submit} className="drawer-form">
    {field('title','Название *','Название задачи или результата')}
-   {kind==='areas'&&<label className="form-field"><span>Цвет</span><input type="color" value={String(form.color??'#4689db')} onChange={e=>set('color',e.target.value)}/></label>}
+   {kind==='areas'&&<>
+     <label className="form-field"><span>Цвет направления</span><input type="color" value={String(form.color??'#4689db')} onChange={e=>set('color',e.target.value)}/></label>
+     <div className="form-field"><span>Emoji-иконка направления</span>
+       <div className="emoji-choices" role="group" aria-label="Выберите emoji направления">
+         {AREA_EMOJIS.map(emoji=><button type="button" key={emoji} className={'emoji-choice '+(String(form.emoji??'📁')===emoji?'chosen':'')} onClick={()=>set('emoji',emoji)} aria-label={'Иконка '+emoji} aria-pressed={String(form.emoji??'📁')===emoji}>{emoji}</button>)}
+       </div>
+     </div>
+     {field('emoji','Или вставьте свой emoji','Например, 🌞')}
+   </>}
    {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'||kind==='events'?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'||kind==='events'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'||kind==='events'?'notes':'description',e.target.value)}/></label>}
    {kind!=='areas'&&<div className="two">{refs('area_id','Направление',store.areas)}{kind!=='projects'&&refs('project_id','Проект',store.projects)}</div>}
    {kind==='projects'&&<>{choices('status','Статус проекта',projectStatuses)}<div className="two">{dateField('start_date','Начало')}{dateField('due_date','Срок')}</div></>}
@@ -54,6 +67,17 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
     <div className="two"><label className="form-field"><span>Приоритет</span><select value={Number(form.priority??4)} onChange={e=>set('priority',Number(e.target.value))}>
      <option value={1}>P1 — важно и срочно</option><option value={2}>P2 — важно</option><option value={3}>P3 — срочно</option><option value={4}>P4 — прочее</option>
     </select></label>{choices('status','Статус',statuses)}</div>
+    <div className="form-field"><span>Цвет карточки задачи</span>
+      <div className="task-color-choices" role="group" aria-label="Выбор из 8 цветов">
+        {TASK_COLORS.map(item=><button type="button" key={item.hex} title={item.name} aria-label={item.name}
+          aria-pressed={taskColor(String(form.color??DEFAULT_TASK_COLOR))===item.hex}
+          className={'task-color-choice '+(taskColor(String(form.color??DEFAULT_TASK_COLOR))===item.hex?'chosen':'')}
+          style={{backgroundColor:item.hex}} onClick={()=>set('color',item.hex)}>
+          {taskColor(String(form.color??DEFAULT_TASK_COLOR))===item.hex&&<Check size={15}/>}
+        </button>)}
+      </div>
+      <small className="palette-hint">Цвет фона задачи. Левая полоса всегда обозначает приоритет.</small>
+    </div>
     <div className="two">{dateField('scheduled_at','Когда выполнить',true)}{dateField('due_at','Дедлайн',true)}</div>
     {number('duration_minutes','Длительность, минут',60)}
     <p className="form-help">Дата выполнения и крайний срок — разные поля. Приоритет задаёт положение в матрице Эйзенхауэра.</p>
@@ -71,35 +95,6 @@ function TaskList({tasks,store,edit,toggle,message='Здесь пока нет �
    <span className={'priority p'+t.priority}>P{t.priority}</span>
   </div>)}</div>
 }
-function WeekView({start,store,day,setDay,edit,slot}:{start:Date;store:Store;day:string;setDay:(s:string)=>void;edit:(e:Editing)=>void;slot:(date:Date)=>void}){
- const days=Array.from({length:7},(_,i)=>addDays(start,i));
- const hours=Array.from({length:16},(_,i)=>i+7);
- const current=dayKey(new Date());
- return <div className="calendar-scroll"><div className="cal-inner">
-  <div className="cal-row cal-head"><div className="rail-label">МЕСТН.</div>{days.map(d=><button className={'day-head '+(day===dayKey(d)?'selected':'')} key={dayKey(d)} onClick={()=>setDay(dayKey(d))}><small>{d.toLocaleDateString('ru-RU',{weekday:'short'}).toUpperCase()}</small><strong className={dayKey(d)===current?'today':''}>{d.getDate()}</strong></button>)}</div>
-  <div className="cal-row all-day"><div className="rail-label">Весь день</div>{days.map(d=><div className="allday-cell" key={dayKey(d)}>{store.tasks.filter(t=>isOpen(t)&&!t.scheduled_at&&t.due_at?.startsWith(dayKey(d))).slice(0,3).map(t=><button key={t.id} onClick={()=>edit({kind:'tasks',record:t})}>{t.title}</button>)}</div>)}</div>
-  <div className="cal-row cal-body">
-   <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-7)*62-7}}>{String(h).padStart(2,'0')}:00</span>)}</div>
-   {days.map(d=>{
-    const key=dayKey(d);
-    const tasks=store.tasks.filter(t=>isOpen(t)&&t.scheduled_at?.startsWith(key)).map(t=>({id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,color:colors[t.priority-1]||colors[3],record:t}));
-    const events=store.events.filter(e=>e.starts_at.startsWith(key)).map(e=>({id:e.id,kind:'events' as const,title:e.title,start:e.starts_at,minutes:Math.max(15,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),color:e.color,record:e}));
-    return <div key={key} className={'day-track '+(day===key?'active':'')} style={{height:16*62}} onClick={e=>{
-      if(e.target!==e.currentTarget)return;
-      const rect=e.currentTarget.getBoundingClientRect();
-      const minute=Math.max(0,Math.min(15.5*60,Math.floor((e.clientY-rect.top)/31)*30));
-      const v=new Date(d);v.setHours(7,minute,0,0);slot(v);
-    }}>{[...tasks,...events].map(b=>{
-      const t=new Date(b.start);const minutes=t.getHours()*60+t.getMinutes();
-      if(minutes>=23*60||minutes+b.minutes<=7*60)return null;
-      const top=Math.max(0,(minutes-7*60)*62/60);
-      const height=Math.max(25,Math.min(b.minutes*62/60,16*62-top));
-      return <button key={b.kind+b.id} className="cal-item" style={{top,height,borderLeftColor:b.color,backgroundColor:b.color+'26'}} onClick={e=>{e.stopPropagation();edit({kind:b.kind,record:b.record})}} title={b.title}><strong>{b.title}</strong><small>{fmtTime(b.start)}</small></button>;
-    })}</div>;
-   })}
-  </div>
- </div></div>
-}
 export default function App(){
  const [data,setData]=useState<Store>(empty);const [page,setPage]=useState<Page>('calendar');
  const [selectedDay,setSelectedDay]=useState(dayKey(new Date()));
@@ -114,7 +109,7 @@ export default function App(){
  const remove=async(kind:Kind,id:number)=>{await api.remove(kind,id);await load()};
  const toggle=async(t:Task)=>{try{await save('tasks',{status:t.status==='done'?'planned':'done'},t.id)}catch(e){setError(String(e))}};
  const open=(kind:Kind,defaults:Record<string,unknown>={})=>{
-  const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60}:kind==='projects'?{status:'active'}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:kind==='events'?{color:'#f3bb28'}:{color:'#4689db'};
+  const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR}:kind==='projects'?{status:'active'}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:kind==='events'?{color:'#f3bb28'}:{color:'#4689db',emoji:'📁'};
   setEditing({kind,defaults:{...basic,...defaults}});
  };
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
@@ -134,11 +129,13 @@ export default function App(){
    setDisplayMonth(new Date(date.getFullYear(),date.getMonth(),1));
    setPeriod({start:null,end:null});
  }
- function pickMonthDate(key:string){
-   setSelectedDay(key);
-   const date=makeDay(key);
+ function pickMonthDate(key:string){goToDay(key);}
+ function pickMonthRange(from:string,to:string){
+   const normalized=normalizeRange(from,to);
+   const date=makeDay(normalized.start!);
+   setSelectedDay(normalized.start!);
    setDisplayMonth(new Date(date.getFullYear(),date.getMonth(),1));
-   setPeriod(previous=>selectMiniDate(previous,key));
+   setPeriod(normalized);
  }
  const moveWeek=(difference:number)=>goToDay(dayKey(addDays(makeDay(selectedDay),difference*7)));
  const resetToday=()=>goToDay(dayKey(new Date()));
@@ -153,7 +150,7 @@ export default function App(){
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
    <header className="topbar"><div className="hero-decoration" aria-hidden="true"></div><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>PERSONAL MANAGEMENT <span className="hero-star">✦</span></small><h1>{title}</h1><p className="hero-subtitle">{page==='calendar'?'Ваша неделя, задачи и важные моменты':'Все важное в одном месте — от идеи до результата'}</p></div></div>
-    <div className="top-actions">{page==='calendar'&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{fmtDate(week,{day:'numeric',month:'short'})} — {fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
+    <div className="top-actions">{page==='calendar'&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
      <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
@@ -167,8 +164,8 @@ export default function App(){
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
-    {page==='calendar'&&<div className="calendar-layout"><WeekView start={week} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot}/><aside className="day-panel">
-     <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})}/>
+    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot}/><aside className="day-panel">
+     <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onRange={pickMonthRange} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})}/>
      <div className="day-plan-heading"><small>ПЛАН ДНЯ</small></div><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
      <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div><h3>Задачи</h3>
      <TaskList tasks={selectedTasks} store={data} edit={setEditing} toggle={toggle} message="На этот день задач пока нет"/>
@@ -186,7 +183,7 @@ export default function App(){
       return <button className="entity-card" key={p.id} onClick={()=>setEditing({kind:'projects',record:p})}><header><FolderKanban size={21}/><span className="pill">{projectStatuses[p.status]||p.status}</span></header><h3>{p.title}</h3><p>{p.description||groupName(p.area_id,data.areas)}</p><div className="card-meta"><span>{done}/{tasks.length} задач</span><span>{p.due_date?fmtDate(p.due_date):'Без срока'}</span></div><div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div><small>{data.goals.filter(g=>g.project_id===p.id).length} связанных целей</small></button>;
      })}{!data.projects.length&&<div className="empty-card">Создайте первый проект, а затем свяжите с ним задачи и цели.</div>}</div><h3 className="section-label">Задачи по проектам</h3><TaskList tasks={active.filter(t=>t.project_id!==null)} store={data} edit={setEditing} toggle={toggle}/></section>}
     {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Измеримые цели</h2><p>Целевые значения, фактический прогресс, период достижения.</p></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} className="entity-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{percent(g)}%</span></header><h3>{g.title}</h3><p>{groupName(g.project_id,data.projects)}</p><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div><div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую измеримую цель: показатель, период и ожидаемый результат.</div>}</div></section>}
-    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot" style={{background:a.color}}/><span className="pill">Направление</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
+    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji" style={{background:a.color}}>{areaEmoji(a.emoji)}</span><span className="pill">Направление</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
     </>}
    </main>
   </div>
