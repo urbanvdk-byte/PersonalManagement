@@ -63,17 +63,17 @@ test('partial collisions share lanes, later independent task uses full day width
    let max=Math.max(...store.tasks.map(t=>t.id));
    store.tasks.push({...first,id:++max,title:'Частично 10:30',scheduled_at:day+'T10:30',duration_minutes:60});
    store.tasks.push({...first,id:++max,title:'Частично 11:00',scheduled_at:day+'T11:00',duration_minutes:60});
-   store.tasks.push({...first,id:++max,title:'Отдельно 14:00',scheduled_at:day+'T14:00',duration_minutes:60});
+   store.tasks.push({...first,id:++max,title:'Отдельно 20:00',scheduled_at:day+'T20:00',duration_minutes:60});
    localStorage.setItem(key,JSON.stringify(store));
    return day;
  },KEY);
  await page.reload();
- const titles=['Обсудить план проекта','Частично 10:30','Частично 11:00','Отдельно 14:00'];
+ const titles=['Обсудить план проекта','Частично 10:30','Частично 11:00','Отдельно 20:00'];
  const intervals={
    'Обсудить план проекта':[600,660],
    'Частично 10:30':[630,690],
    'Частично 11:00':[660,720],
-   'Отдельно 14:00':[840,900]
+   'Отдельно 20:00':[1200,1260]
  };
  const boxes=await layoutBoxes(page,day,titles,intervals);
  checkHorizontalSeparation(boxes);
