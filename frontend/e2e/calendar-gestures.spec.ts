@@ -7,10 +7,10 @@ async function revealTask(task:Locator){
     if(scroller)scroller.scrollTop=Math.max(0,scroller.scrollTop-155);
   });
   await expect.poll(async()=>{
-    const box=await task.boundingBox();
-    if(!box)return false;
-    return task.page().evaluate(({x,y})=>Boolean(document.elementFromPoint(x,y)?.closest('.cal-item.task-block')),
-      {x:box.x+Math.min(24,box.width/3),y:box.y+box.height/2});
+    return task.evaluate(node=>{
+      const box=node.getBoundingClientRect();
+      return document.elementFromPoint(box.x+Math.min(24,box.width/3),box.y+box.height/2)?.closest('.cal-item.task-block')===node;
+    });
   }).toBe(true);
 }
 
