@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --no-audit --no-fund
+      - name: Verify month selector behavior
+        run: npm run test:month
       - name: Build backend-connected frontend
         run: npm run build
       - name: Build GitHub Pages demo

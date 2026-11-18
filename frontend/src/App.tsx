@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X } from 'lucide-react';
 import { api, isDemo } from './api';
+import MiniMonth from './MiniMonth';
+import {selectMiniDate,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Store, Task } from './types';
 
@@ -100,7 +102,10 @@ function WeekView({start,store,day,setDay,edit,slot}:{start:Date;store:Store;day
 }
 export default function App(){
  const [data,setData]=useState<Store>(empty);const [page,setPage]=useState<Page>('calendar');
- const [week,setWeek]=useState(weekStart(new Date()));const [selectedDay,setSelectedDay]=useState(dayKey(new Date()));
+ const [selectedDay,setSelectedDay]=useState(dayKey(new Date()));
+ const [displayMonth,setDisplayMonth]=useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1));
+ const [period,setPeriod]=useState<DateSelection>({start:null,end:null});
+ const week=weekStart(makeDay(selectedDay));
  const [editing,setEditing]=useState<Editing|null>(null);const [error,setError]=useState('');const [loading,setLoading]=useState(true);
  const [search,setSearch]=useState('');const [mobile,setMobile]=useState(false);
  const load=async()=>setData(await api.load());
@@ -117,7 +122,26 @@ export default function App(){
  const selectedTasks=active.filter(t=>t.scheduled_at?.startsWith(selectedDay)||t.due_at?.startsWith(selectedDay));
  const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
- const resetToday=()=>{setWeek(weekStart(new Date()));setSelectedDay(dayKey(new Date()))};
+ const busyDays=useMemo(()=>{
+   const days=new Set<string>();
+   data.tasks.filter(isOpen).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10));else if(t.due_at)days.add(t.due_at.slice(0,10))});
+   data.events.forEach(e=>days.add(e.starts_at.slice(0,10)));
+   return days;
+ },[data]);
+ function goToDay(key:string){
+   setSelectedDay(key);
+   const date=makeDay(key);
+   setDisplayMonth(new Date(date.getFullYear(),date.getMonth(),1));
+   setPeriod({start:null,end:null});
+ }
+ function pickMonthDate(key:string){
+   setSelectedDay(key);
+   const date=makeDay(key);
+   setDisplayMonth(new Date(date.getFullYear(),date.getMonth(),1));
+   setPeriod(previous=>selectMiniDate(previous,key));
+ }
+ const moveWeek=(difference:number)=>goToDay(dayKey(addDays(makeDay(selectedDay),difference*7)));
+ const resetToday=()=>goToDay(dayKey(new Date()));
  const addSlot=(d:Date)=>open('tasks',{scheduled_at:dateTimeLocal(d),status:'planned'});
  return <div className="app">
   <aside className={'sidebar '+(mobile?'open':'')}>
@@ -129,7 +153,7 @@ export default function App(){
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
    <header className="topbar"><div className="hero-decoration" aria-hidden="true"></div><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>PERSONAL MANAGEMENT <span className="hero-star">✦</span></small><h1>{title}</h1><p className="hero-subtitle">{page==='calendar'?'Ваша неделя, задачи и важные моменты':'Все важное в одном месте — от идеи до результата'}</p></div></div>
-    <div className="top-actions">{page==='calendar'&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>setWeek(addDays(week,-7))}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>setWeek(addDays(week,7))}><ChevronRight size={19}/></button><span>{fmtDate(week,{day:'numeric',month:'short'})} — {fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
+    <div className="top-actions">{page==='calendar'&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{fmtDate(week,{day:'numeric',month:'short'})} — {fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
      <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
@@ -143,8 +167,9 @@ export default function App(){
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
-    {page==='calendar'&&<div className="calendar-layout"><WeekView start={week} store={data} day={selectedDay} setDay={setSelectedDay} edit={setEditing} slot={addSlot}/><aside className="day-panel">
-     <small>ПЛАН ДНЯ</small><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
+    {page==='calendar'&&<div className="calendar-layout"><WeekView start={week} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot}/><aside className="day-panel">
+     <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})}/>
+     <div className="day-plan-heading"><small>ПЛАН ДНЯ</small></div><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
      <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div><h3>Задачи</h3>
      <TaskList tasks={selectedTasks} store={data} edit={setEditing} toggle={toggle} message="На этот день задач пока нет"/>
      {selectedEvents.length>0&&<><h3>События</h3>{selectedEvents.map(e=><button className="event-row" key={e.id} onClick={()=>setEditing({kind:'events',record:e})}><span style={{background:e.color}}/><div><strong>{e.title}</strong><small>{fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></div></button>)}</>}
