@@ -37,6 +37,10 @@ jobs:
         env:
           VITE_DEMO_MODE: 'true'
           VITE_BASE_PATH: '/PersonalManagement/'
+      - name: Install Chromium for gesture tests
+        run: npx playwright install --with-deps chromium
+      - name: Test mouse drag, resize and mobile long press
+        run: npm run test:e2e
       - name: Verify Pages asset paths
         run: grep -q '/PersonalManagement/assets/' dist/index.html
   docker:
