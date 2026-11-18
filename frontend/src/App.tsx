@@ -6,10 +6,11 @@ import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
+import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Store, Task } from './types';
 
-const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[]};
+const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:[]};
 const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
  {id:'calendar',title:'Календарь',icon:CalendarDays},{id:'inbox',title:'Входящие',icon:Inbox},
  {id:'tasks',title:'Все задачи',icon:ListTodo},{id:'matrix',title:'Приоритеты',icon:LayoutGrid},
@@ -23,11 +24,15 @@ const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
 function percent(goal:Goal){const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
 
-type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,data:Record<string,unknown>,id?:number)=>Promise<void>;remove:(kind:Kind,id:number)=>Promise<void>};
-function Drawer({editing,store,close,save,remove}:DrawerProps){
+type Scope='one'|'future'|'all';
+type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,data:Record<string,unknown>,id?:number)=>Promise<void>;remove:(kind:Kind,id:number)=>Promise<void>;
+ saveRecurring:(task:Task,changes:Record<string,unknown>,scope:Scope)=>Promise<void>;removeRecurring:(task:Task,scope:Scope)=>Promise<void>};
+function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:DrawerProps){
  const {kind,record,defaults}=editing;
  const [form,setForm]=useState<Record<string,unknown>>({...defaults,...record});
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+ const instance=kind==='tasks'&&(record as Task|undefined)?.occurrence_date?record as Task:null;
+ const [scope,setScope]=useState<Scope>(instance?'one':'all');
  const missingTaskTime=kind==='tasks'&&!hasScheduledTime(form.scheduled_at);
  const invalidTaskDuration=kind==='tasks'&&!isValidTaskDuration(form.duration_minutes??60);
  const missingTitle=!String(form.title??'').trim();
@@ -58,16 +63,28 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
   e.preventDefault();
   if(preventSave){setError('Заполните обязательные поля задачи и проверьте длительность.');return;}
   setBusy(true);setError('');
-  const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;
+  const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;delete payload.occurrence_date;
   if(kind==='tasks'){
     Object.assign(payload,priorityFlags(Number(payload.priority??4)));
     payload.color=taskColor(String(payload.color??DEFAULT_TASK_COLOR));
   }
   if(kind==='areas')payload.emoji=areaEmoji(String(payload.emoji??'📁'));
-  try{await save(kind,payload,record?.id);close()}catch(err){setError(err instanceof Error?err.message:String(err))}finally{setBusy(false)}
+  try{
+    if(instance){
+      const changed=Object.fromEntries(Object.entries(payload).filter(([key,value])=>value!==(record as unknown as Record<string,unknown>)[key]));
+      await saveRecurring(instance,changed,scope);
+    }else await save(kind,payload,record?.id);
+    close();
+  }catch(err){setError(err instanceof Error?err.message:String(err))}finally{setBusy(false)}
  }
- async function doRemove(){if(!record||!window.confirm('Удалить запись без возможности отмены?'))return;setBusy(true);
-  try{await remove(kind,record.id);close()}catch(err){setError(String(err));setBusy(false)}
+ async function doRemove(){
+  if(!record||!window.confirm(instance?'Удалить выбранные повторения?':'Удалить запись без возможности отмены?'))return;
+  setBusy(true);
+  try{
+    if(instance)await removeRecurring(instance,scope);
+    else await remove(kind,record.id);
+    close();
+  }catch(err){setError(String(err));setBusy(false)}
  }
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close()}}><aside className="drawer" role="dialog" aria-modal="true" aria-label="Редактирование">
   <div className="drawer-head"><div><small>{record?'РЕДАКТИРОВАНИЕ':'НОВАЯ ЗАПИСЬ'}</small><h2>{record?'Изменить':'Добавить'} {labels[kind]}</h2></div><button className="icon-btn" onClick={close} aria-label="Закрыть"><X size={20}/></button></div>
@@ -103,7 +120,18 @@ function Drawer({editing,store,close,save,remove}:DrawerProps){
     </div>
     <div className="two">{dateField('scheduled_at','Когда выполнить',true)}{dateField('due_at','Дедлайн',true)}</div>
     {number('duration_minutes','Длительность, минут',60)}
-    <p className="form-help">Дата выполнения и крайний срок — разные поля. Приоритет задаёт положение в матрице Эйзенхауэра.</p>
+    {instance&&<label className="form-field"><span>К каким повторениям применить изменения?</span>
+      <select aria-label="Область изменения повторений" value={scope} onChange={e=>setScope(e.target.value as Scope)}>
+        <option value="one">Только это повторение</option>
+        <option value="future">Это и следующие</option>
+        <option value="all">Вся серия</option>
+      </select>
+    </label>}
+    {(!instance||scope!=='one')&&<>
+      {choices('recurrence','Повторять',RECURRENCES)}
+      {String(form.recurrence??'')!==''&&dateField('recurrence_until','Повторять до (необязательно)')}
+    </>}
+    <p className="form-help">Дата выполнения и крайний срок — разные поля. Повторения отображаются виртуально и не создают тысячи задач.</p>
    </>}
    {kind==='events'&&<><div className="two">{dateField('starts_at','Начало *',true)}{dateField('ends_at','Окончание *',true)}</div><label className="form-field"><span>Цвет</span><input type="color" value={String(form.color??'#f3bb28')} onChange={e=>set('color',e.target.value)}/></label></>}
    {error&&<p role="alert" className="error">{error}</p>}
@@ -132,27 +160,63 @@ export default function App(){
  const load=async()=>setData(await api.load());
  useEffect(()=>{load().catch(e=>setError(String(e))).finally(()=>setLoading(false))},[]);
  const save=async(kind:Kind,payload:Record<string,unknown>,id?:number)=>{await api.save(kind,payload,id);await load()};
+ const saveRecurring=async(task:Task,changes:Record<string,unknown>,scope:Scope)=>{
+   if(!task.occurrence_date){await save('tasks',changes,task.id);return;}
+   if(scope==='one')await api.saveOccurrence(task.id,task.occurrence_date,changes);
+   if(scope==='future'){
+     const master=data.tasks.find(x=>x.id===task.id)!;
+     if(task.occurrence_date===master.scheduled_at?.slice(0,10))await api.save('tasks',changes,task.id);
+     else await api.splitSeries(task.id,task.occurrence_date,changes);
+   }
+   if(scope==='all'){
+     const delta={...changes};
+     if(typeof delta.scheduled_at==='string'){
+       const master=data.tasks.find(x=>x.id===task.id)!;
+       delta.scheduled_at=transferSeriesStart(master,task.occurrence_date,delta.scheduled_at);
+     }
+     await api.save('tasks',delta,task.id);
+   }
+   await load();
+ };
+ const removeRecurring=async(task:Task,scope:Scope)=>{
+   if(!task.occurrence_date){await remove('tasks',task.id);return;}
+   if(scope==='one')await api.saveOccurrence(task.id,task.occurrence_date,{status:'cancelled'});
+   if(scope==='future')await api.save('tasks',{recurrence_until:beforeDate(task.occurrence_date)},task.id);
+   if(scope==='all')await api.remove('tasks',task.id);
+   await load();
+ };
  const moveOrResizeTask=async(task:Task,changes:Record<string,unknown>)=>{
-   try{await save('tasks',changes,task.id)}
-   catch(e){setError(e instanceof Error?e.message:String(e));throw e}
+   try{
+     if(task.occurrence_date)await saveRecurring(task,changes,'one');
+     else await save('tasks',changes,task.id);
+   }catch(e){setError(e instanceof Error?e.message:String(e));throw e}
  };
  const remove=async(kind:Kind,id:number)=>{await api.remove(kind,id);await load()};
- const toggle=async(t:Task)=>{try{await save('tasks',{status:t.status==='done'?'planned':'done'},t.id)}catch(e){setError(String(e))}};
+ const toggle=async(t:Task)=>{
+  try{
+    if(t.occurrence_date)await saveRecurring(t,{status:t.status==='done'?'planned':'done'},'one');
+    else await save('tasks',{status:t.status==='done'?'planned':'done'},t.id);
+  }catch(e){setError(String(e))}
+ };
  const open=(kind:Kind,defaults:Record<string,unknown>={})=>{
-  const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR}:kind==='projects'?{status:'active'}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:kind==='events'?{color:'#f3bb28'}:{emoji:'📁'};
+  const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR,recurrence:'',recurrence_until:null}:kind==='projects'?{status:'active'}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:kind==='events'?{color:'#f3bb28'}:{emoji:'📁'};
   setEditing({kind,defaults:{...basic,...defaults}});
  };
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
  const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
- const selectedTasks=active.filter(t=>t.scheduled_at?.startsWith(selectedDay)||t.due_at?.startsWith(selectedDay));
+ const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay)
+   .concat(active.filter(t=>!t.recurrence&&!t.scheduled_at&&t.due_at?.startsWith(selectedDay)));
  const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
    const days=new Set<string>();
-   data.tasks.filter(isOpen).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10));else if(t.due_at)days.add(t.due_at.slice(0,10))});
+   const first=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth(),1));
+   const last=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth()+1,0));
+   expandTasks(data.tasks.filter(isOpen),data.occurrences||[],first,last).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10))});
+   data.tasks.filter(t=>isOpen(t)&&!t.recurrence&&!t.scheduled_at).forEach(t=>{if(t.due_at)days.add(t.due_at.slice(0,10))});
    data.events.forEach(e=>days.add(e.starts_at.slice(0,10)));
    return days;
- },[data]);
+ },[data,displayMonth]);
  function goToDay(key:string){
    setSelectedDay(key);
    const date=makeDay(key);
@@ -217,6 +281,6 @@ export default function App(){
     </>}
    </main>
   </div>
-  {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove}/>}
+  {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+'-'+((editing.record as Task|undefined)?.occurrence_date||'')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove} saveRecurring={saveRecurring} removeRecurring={removeRecurring}/>}
  </div>
 }

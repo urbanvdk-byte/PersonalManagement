@@ -2,6 +2,7 @@ import {useEffect,useRef,useState,type CSSProperties,type PointerEvent as ReactP
 import {dayKey,makeDay} from './date';
 import {layoutTimedItems} from './calendarLayout';
 import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
+import {expandTasks} from './recurrence';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
 import {HOUR_HEIGHT,fromTime,movePreview,resizePreview,toScheduledAt,isPreviewChanged,type CalendarPreview,type GestureMode} from './calendarInteraction';
 import type {Editing,Store,Task} from './types';
@@ -51,12 +52,13 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
  const nowKey=dayKey(now);
  const nowMinutes=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
  const rangeOn=Boolean(selection.start&&selection.end);
+ const expanded=expandTasks(store.tasks,store.occurrences||[],dayKey(days[0]),dayKey(days[days.length-1]));
  // Timed events and tasks participate in the same collision layout, just
  // like Google Calendar. Each date gets enough horizontal space for its
  // busiest time slot, with horizontal scrolling instead of hidden titles.
  const dayLayouts=days.map(d=>{
    const key=dayKey(d);
-   const tasks=store.tasks.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
+   const tasks=expanded.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
      id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,
      priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
      emoji:t.area_id?areaEmoji(store.areas.find(a=>a.id===t.area_id)?.emoji):null,record:t
@@ -67,7 +69,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      priorityColor:e.color,fill:e.color,emoji:null,record:e
    }));
    const placement=layoutTimedItems([...tasks,...events].map(b=>({
-     id:b.kind+'-'+b.id,
+     id:b.kind+'-'+b.id+(b.kind==='tasks'?'@'+(b.record.occurrence_date||''):''),
      start:fromTime(b.start),
      end:fromTime(b.start)+b.minutes
    })));
@@ -105,10 +107,12 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      const target=trackAt(x);
      if(!target)return g.preview;
      const pointerMinute=(y-target.rect.top)/HOUR_HEIGHT*60;
-     return movePreview(g.task.id,target.key,pointerMinute,g.offsetMinutes,g.duration);
+     return {...movePreview(g.task.id,target.key,pointerMinute,g.offsetMinutes,g.duration),
+       ...(g.task.occurrence_date?{occurrenceDate:g.task.occurrence_date}:{})};
    }
    const delta=(y-g.y)/HOUR_HEIGHT*60;
-   return resizePreview(g.task.id,g.day,g.minute,g.duration,g.mode,delta);
+   return {...resizePreview(g.task.id,g.day,g.minute,g.duration,g.mode,delta),
+     ...(g.task.occurrence_date?{occurrenceDate:g.task.occurrence_date}:{})};
  }
  function press(e:ReactPointerEvent<HTMLButtonElement>,task:Task,mode:GestureMode){
    if(busy.current||e.button!==0||!task.scheduled_at)return;
@@ -120,7 +124,8 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    const offsetMinutes=Math.max(0,Math.min(task.duration_minutes,(e.clientY-rect.top)/HOUR_HEIGHT*60));
    const original:CalendarPreview={
      taskId:task.id,day:task.scheduled_at.slice(0,10),minute,
-     duration:task.duration_minutes,mode
+     duration:task.duration_minutes,mode,
+     ...(task.occurrence_date?{occurrenceDate:task.occurrence_date}:{})
    };
    gesture.current={
      pointerId:e.pointerId,task,mode,x:e.clientX,y:e.clientY,
@@ -223,9 +228,9 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           const top=Math.max(0,(minute-START*60)*HOUR_HEIGHT/60);
           const height=Math.max(18,Math.min(b.minutes*HOUR_HEIGHT/60,(END-START)*HOUR_HEIGHT-top));
           const task=b.kind==='tasks';
-          const location=placement.placements.get(b.kind+'-'+b.id);
-          const gestureTask=task&&preview?.taskId===b.id;
-          return <button key={b.kind+b.id}
+          const location=placement.placements.get(b.kind+'-'+b.id+(task?'@'+(b.record.occurrence_date||''):''));
+          const gestureTask=task&&preview?.taskId===b.id&&preview?.occurrenceDate===b.record.occurrence_date;
+          return <button key={b.kind+b.id+(task?b.record.occurrence_date||'':'')}
             className={'cal-item '+(task?'task-block':'event-block')+(task&&b.minutes<60?' compact-task':'')+(gestureTask?' gesture-source':'')}
             style={{
               top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35',
@@ -250,9 +255,9 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
               if(task){if(e.detail===0)edit({kind:'tasks',record:b.record as Task});}
               else edit({kind:'events',record:b.record});
             }}
-            title={b.title+' · '+b.start.slice(11,16)}
+            title={(task&&b.record.recurrence?'↻ ':'')+b.title+' · '+b.start.slice(11,16)}
             aria-label={b.title+' · '+b.start.slice(11,16)}>
-            <strong>{b.title}</strong>
+            <strong>{task&&b.record.recurrence?'↻ ':''}{b.title}</strong>
             {!(task&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
             {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
             {task&&<>

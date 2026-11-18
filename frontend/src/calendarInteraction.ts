@@ -5,7 +5,7 @@ export const MINUTES_IN_DAY=1440;
 export const HOUR_HEIGHT=62/1.5;
 
 export type GestureMode='move'|'resize-start'|'resize-end';
-export type CalendarPreview={taskId:number;day:string;minute:number;duration:number;mode:GestureMode};
+export type CalendarPreview={taskId:number;day:string;minute:number;duration:number;mode:GestureMode;occurrenceDate?:string};
 
 const limit=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
 export const snapQuarter=(value:number)=>Math.round(value/SNAP_MINUTES)*SNAP_MINUTES;
