@@ -1,5 +1,5 @@
 export type Kind = 'areas'|'projects'|'goals'|'tasks'|'events';
-export type Page = 'calendar'|'inbox'|'tasks'|'matrix'|'projects'|'goals'|'areas';
+export type Page = 'calendar'|'schedule'|'inbox'|'tasks'|'matrix'|'projects'|'goals'|'areas';
 export type Base = {id:number;title:string;created_at:string};
 export type Area = Base & {color:string;emoji?:string};
 export type Project = Base & {area_id:number|null;area_ids?:number[];description:string;status:string;start_date:string|null;due_date:string|null};
