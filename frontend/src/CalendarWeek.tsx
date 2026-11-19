@@ -18,6 +18,7 @@ type Props={
   setDay:(date:string)=>void;edit:(item:Editing)=>void;slot:(date:Date)=>void;
   updateTask:(task:Task,changes:Record<string,unknown>)=>Promise<void>;
   onTomorrow:(task:Task)=>Promise<void>;
+  onDropTask:(taskId:number,when:string)=>Promise<void>;
 };
 type Gesture={
   pointerId:number;task:Task;mode:GestureMode;
@@ -25,7 +26,7 @@ type Gesture={
   active:boolean;moved:boolean;preview:CalendarPreview;
 };
 
-export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow}:Props){
+export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow,onDropTask}:Props){
  const days=selectedCalendarDays(start,selection);
  const hours=Array.from({length:END-START},(_,i)=>i+START);
  const [now,setNow]=useState(()=>new Date());
@@ -36,6 +37,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
  const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const lastTap=useRef<{key:string;at:number}|null>(null);
  const touchClickUntil=useRef(0);
+ const suppressGridUntil=useRef(0);
  const tapTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const previewRef=useRef<CalendarPreview|null>(null);
  const busy=useRef(false);
@@ -189,6 +191,9 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
        if(lastTap.current?.key===key&&at-lastTap.current.at<350){
          if(tapTimer.current)clearTimeout(tapTimer.current);
          tapTimer.current=null;lastTap.current=null;
+         // The task disappears from its original slot after the move.
+         // Suppress the synthetic click on that now-empty calendar cell.
+         suppressGridUntil.current=Date.now()+1000;
          void onTomorrow(g.task).catch(()=>{});
        }else{
          lastTap.current={key,at};
@@ -241,7 +246,17 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
       return <div key={key} data-calendar-day={key}
         className={'day-track '+(day===key?'active ':'')+(rangeOn?'in-range':'')+(pending?' gesture-target':'')}
         style={{height:(END-START)*HOUR_HEIGHT,'--hour-height':HOUR_HEIGHT+'px'} as CSSProperties}
+        onDragOver={e=>{if(e.dataTransfer.types.includes('application/x-pm-task'))e.preventDefault();}}
+        onDrop={e=>{
+          const raw=e.dataTransfer.getData('application/x-pm-task');
+          if(!/^\d+$/.test(raw))return;
+          e.preventDefault();e.stopPropagation();
+          const rect=e.currentTarget.getBoundingClientRect();
+          const minutes=Math.max(0,Math.min(1410,Math.floor((e.clientY-rect.top)/HOUR_HEIGHT*4)*15));
+          void onDropTask(Number(raw),toScheduledAt(key,minutes)).catch(()=>{});
+        }}
         onClick={e=>{
+          if(Date.now()<suppressGridUntil.current)return;
           if(e.target!==e.currentTarget)return;
           const rect=e.currentTarget.getBoundingClientRect();
           const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));

@@ -35,7 +35,7 @@ export default function CalendarBacklog({tasks,onSchedule,onOpen}:{
    return null;
  }
  function begin(e:ReactPointerEvent<HTMLDivElement>,task:Task){
-   if(e.button!==0)return;
+   if(e.button!==0||e.pointerType==='mouse')return;
    stop();
    const pointerId=e.pointerId;
    drag.current={pointerId,task,x:e.clientX,y:e.clientY,active:false};
@@ -79,8 +79,14 @@ export default function CalendarBacklog({tasks,onSchedule,onOpen}:{
   <div className="backlog-items">
    {tasks.length===0?<p className="backlog-empty">Все задачи распределены по времени.</p>:
     tasks.slice().sort((a,b)=>a.priority-b.priority).map(t=>
-     <div key={t.id} className="backlog-task" role="button" tabIndex={0}
+     <div key={t.id} className="backlog-task" role="button" tabIndex={0} draggable
        style={{borderLeftColor:PRIORITY_COLORS[t.priority-1]}}
+       onDragStart={e=>{
+         e.dataTransfer.setData('application/x-pm-task',String(t.id));
+         e.dataTransfer.setData('text/plain',String(t.id));
+         e.dataTransfer.effectAllowed='move';
+       }}
+       onClick={()=>onOpen(t)}
        onPointerDown={e=>begin(e,t)}
        onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(t);}}}
        title="Зажмите и перенесите в календарь. На телефоне удерживайте перед переносом.">

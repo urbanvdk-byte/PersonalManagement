@@ -408,7 +408,12 @@ export default function App(){
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
-    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}/><aside className="day-panel">
+    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}
+      onDropTask={async(taskId,when)=>{
+        const task=data.tasks.find(t=>t.id===taskId);
+        if(!task||task.scheduled_at)throw Error('Задача для переноса не найдена');
+        await moveOrResizeTask(task,{scheduled_at:when,status:'planned'});
+      }}/><aside className="day-panel">
      <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onRange={pickMonthRange} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})} onToday={resetToday}/>
      <div className="backlog-toggle"><button aria-expanded={backlogOpen} onClick={()=>setBacklogOpen(!backlogOpen)}>
        {backlogOpen?'▾':'▸'} Незапланированные <span>{active.filter(t=>!t.scheduled_at).length}</span>
