@@ -24,8 +24,8 @@ export default function CalendarBacklog({tasks,onSchedule,onOpen}:{
      if(!scroller)continue;
      const rect=track.getBoundingClientRect();
      const scroll=scroller.getBoundingClientRect();
-     if(x<Math.max(rect.left,scroll.left)||x>Math.min(rect.right,scroll.right)||
-        y<scroll.top+40||y>scroll.bottom)return null;
+     if(y<scroll.top+40||y>scroll.bottom)return null;
+     if(x<Math.max(rect.left,scroll.left)||x>Math.min(rect.right,scroll.right))continue;
      const minute=Math.max(0,Math.min(1440-30,Math.floor((y-rect.top)/HOUR_HEIGHT*4)*15));
      const day=track.dataset.calendarDay!;
      return {day,when:toScheduledAt(day,minute)};
