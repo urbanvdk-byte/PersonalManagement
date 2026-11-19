@@ -356,3 +356,55 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
  .schedule-summary{margin-bottom:17px!important}
  .schedule-summary>div{min-height:60px;padding:11px 9px!important;gap:5px}
 }
+
+/* Mobile one-row calendar controls and a time-centric day view. */
+.week-range-mobile{display:none!important}
+.schedule-entry{position:relative}
+.schedule-entry-card.schedule-task{
+ border:1px solid var(--task-outline,#3466d9)!important;
+}
+.schedule-now-marker{
+ display:flex;align-items:center;gap:3px;
+ width:75px;color:#e03434;z-index:4;
+ pointer-events:none;font-variant-numeric:tabular-nums;
+}
+.schedule-now-marker.standalone{position:relative;min-height:24px;margin:7px 0 14px}
+.schedule-now-marker.within-entry{
+ position:absolute;left:0;transform:translateY(-50%);margin:0;
+}
+.schedule-now-clock{font-size:11px;font-weight:800;line-height:1;white-space:nowrap}
+.schedule-now-stroke{position:relative;flex:1;height:2px;background:#e03434;min-width:4px}
+.schedule-now-stroke::after{
+ content:"";position:absolute;right:0;top:50%;transform:translate(50%,-50%);
+ width:7px;height:7px;border-radius:50%;background:#e03434;
+}
+@media(max-width:760px){
+ .topbar .top-actions{
+   display:flex!important;align-items:center!important;justify-content:space-between!important;
+   flex-wrap:nowrap!important;width:100%!important;min-width:0!important;gap:4px!important;
+ }
+ .topbar .week-nav{display:flex!important;align-items:center!important;
+   flex:1 1 auto!important;min-width:0!important;gap:2px!important;flex-wrap:nowrap!important;
+ }
+ .topbar .week-nav .subtle-btn{padding:7px 8px!important;font-size:10px!important;white-space:nowrap}
+ .topbar .week-nav .icon-btn{
+   flex:0 0 25px!important;width:25px!important;height:28px!important;padding:3px!important;
+   display:grid!important;place-items:center!important;
+ }
+ .topbar .week-nav .icon-btn svg{width:15px;height:15px}
+ .topbar .week-nav .week-range-desktop{display:none!important}
+ .topbar .week-nav .week-range-mobile{
+   display:inline-block!important;flex:1 1 auto!important;min-width:0!important;
+   margin:0 2px!important;text-align:center!important;
+   font-size:10px!important;white-space:nowrap!important;
+   overflow:hidden!important;text-overflow:ellipsis!important;
+ }
+ .topbar .top-actions>.primary-btn{
+   flex:0 0 auto!important;white-space:nowrap!important;min-width:0!important;
+   padding:8px 9px!important;font-size:10px!important;gap:4px!important;
+ }
+ .topbar .top-actions>.primary-btn svg{width:13px;height:13px}
+ .schedule-now-marker{width:42px;gap:2px}
+ .schedule-now-clock{font-size:9px}
+ .schedule-now-stroke::after{width:6px;height:6px}
+}
