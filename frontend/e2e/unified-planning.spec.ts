@@ -91,17 +91,19 @@ test('double touch on mobile moves just one appointment to tomorrow',async({brow
  await task.scrollIntoViewIfNeeded();
  await task.evaluate(node=>{
    const scroller=node.closest('.calendar-scroll');
-   if(scroller)scroller.scrollTop=Math.max(0,scroller.scrollTop-150);
+   if(!scroller)return;
+   const bounds=node.getBoundingClientRect(),viewport=scroller.getBoundingClientRect();
+   scroller.scrollTop+=bounds.top+bounds.height/2-(viewport.top+Math.min(225,viewport.height/2));
+ });
+ await task.evaluate(node=>{
+   const bounds=node.getBoundingClientRect();
+   window.scrollBy(0,Math.max(0,bounds.top-window.innerHeight/2));
  });
  const rect=await task.boundingBox();
  expect(rect).not.toBeNull();
  const x=rect!.x+Math.min(28,rect!.width/3),y=rect!.y+rect!.height/2;
- console.log('TOUCH_HIT',JSON.stringify(await page.evaluate(({x,y})=>({
-   x,y,win:{height:innerHeight,width:innerWidth},
-   hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,450),
-   cal:document.querySelector('.calendar-scroll')?.getBoundingClientRect().toJSON(),
-   nav:document.querySelector('.mobile-bottom-nav')?.getBoundingClientRect().toJSON()
- }),{x,y})));
+ expect(y).toBeGreaterThan(0);
+ expect(y).toBeLessThan(770);
  const id=await task.evaluate(node=>Number(node.getAttribute('data-layout-column'))); // Touch target sanity check
  expect(id).not.toBeNaN();
  const cdp=await context.newCDPSession(page);
