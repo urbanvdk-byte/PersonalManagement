@@ -230,3 +230,34 @@ CREATE INDEX IF NOT EXISTS idx_project_areas_area ON project_areas(area_id);
         assert updated["area_ids"]==[] and updated["area_id"] is None
     with TestClient(app) as client:
         assert client.get("/api/bootstrap",headers=auth()).json()["projects"][0]["area_ids"]==[]
+
+
+def test_project_milestones_checklist_activity_and_cascade(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"extras.db"))
+    with TestClient(app) as client:
+        project=client.post("/api/projects",headers=auth(),json={"title":"Проект"}).json()
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Подготовить","project_id":project["id"]}).json()
+        base=f'/api/tasks/{task["id"]}/checklist'
+        item=client.post(base,headers=auth(),json={"title":"Проверить"}).json()
+        assert item["done"]==0
+        assert client.post(base,headers=auth(),json={"title":""}).status_code==422
+        done=client.patch(base+f'/{item["id"]}',headers=auth(),json={"done":1}).json()
+        assert done["done"]==1
+        assert client.patch(base+"/999",headers=auth(),json={"done":1}).status_code==404
+        milestone=f'/api/projects/{project["id"]}/milestones'
+        goal=client.post(milestone,headers=auth(),json={"title":"Этап 1","due_date":"2026-12-18"}).json()
+        assert goal["due_date"]=="2026-12-18"
+        assert client.patch(milestone+f'/{goal["id"]}',headers=auth(),json={"done":1}).json()["done"]==1
+        assert client.post(milestone,headers=auth(),json={"title":"Не дата","due_date":"2026-13-99"}).status_code==422
+        data=client.get("/api/bootstrap",headers=auth()).json()
+        assert any(item["task_id"]==task["id"] for item in data["checklist"])
+        assert any(item["project_id"]==project["id"] for item in data["milestones"])
+        assert any(item["project_id"]==project["id"] for item in data["activity"])
+        assert "checklist" in client.get("/api/export",headers=auth()).json()["data"]
+        assert client.delete(base+f'/{item["id"]}',headers=auth()).status_code==204
+        assert client.delete(milestone+f'/{goal["id"]}',headers=auth()).status_code==204
+        assert client.delete(f'/api/projects/{project["id"]}',headers=auth()).status_code==204
+        data=client.get("/api/bootstrap",headers=auth()).json()
+        assert not any(a["project_id"]==project["id"] for a in data["activity"])
+        assert not any(m["project_id"]==project["id"] for m in data["milestones"])
