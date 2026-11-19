@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight } from 'lucide-react';
 import { api, isDemo } from './api';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
+import CalendarBacklog from './CalendarBacklog';
+import TaskChecklist from './TaskChecklist';
+import {ProjectMilestones,ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Project, Store, Task } from './types';
 
-const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:[]};
+const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:[],checklist:[],milestones:[],activity:[]};
 const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
  {id:'calendar',title:'Календарь',icon:CalendarDays},{id:'inbox',title:'Входящие',icon:Inbox},
  {id:'tasks',title:'Все задачи',icon:ListTodo},{id:'matrix',title:'Приоритеты',icon:LayoutGrid},
@@ -26,8 +29,9 @@ function percent(goal:Goal){const range=goal.target_value-goal.start_value;retur
 
 type Scope='one'|'future'|'all';
 type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,data:Record<string,unknown>,id?:number)=>Promise<void>;remove:(kind:Kind,id:number)=>Promise<void>;
- saveRecurring:(task:Task,changes:Record<string,unknown>,scope:Scope)=>Promise<void>;removeRecurring:(task:Task,scope:Scope)=>Promise<void>};
-function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:DrawerProps){
+ saveRecurring:(task:Task,changes:Record<string,unknown>,scope:Scope)=>Promise<void>;removeRecurring:(task:Task,scope:Scope)=>Promise<void>;
+ reload:()=>Promise<void>;unschedule:(task:Task)=>Promise<void>};
+function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,reload,unschedule}:DrawerProps){
  const {kind,record,defaults}=editing;
  const [form,setForm]=useState<Record<string,unknown>>({...defaults,...record});
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
@@ -151,9 +155,14 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:
     </>}
     <p className="form-help">{editing.requireSchedule?'Для задачи из календаря укажите дату и время.':'Можно оставить время пустым: задача сохранится в списке и не появится в календаре.'} Повторяющиеся задачи всегда требуют даты. Крайний срок и запланированное время — разные поля.</p>
    </>}
+   {kind==='tasks'&&record&&<TaskChecklist taskId={record.id} items={(store.checklist||[]).filter(item=>item.task_id===record.id)} reload={reload}/>}
    {kind==='events'&&<><div className="two">{dateField('starts_at','Начало *',true)}{dateField('ends_at','Окончание *',true)}</div><label className="form-field"><span>Цвет</span><input type="color" value={String(form.color??'#f3bb28')} onChange={e=>set('color',e.target.value)}/></label></>}
    {error&&<p role="alert" className="error">{error}</p>}
-   <div className="form-actions">{record&&<button type="button" className="danger-btn" disabled={busy} onClick={doRemove}><Trash2 size={15}/> Удалить</button>}
+   <div className="form-actions">{kind==='tasks'&&record&&(record as Task).scheduled_at&&!(record as Task).recurrence&&
+     <button type="button" className="secondary-btn" disabled={busy} onClick={()=>void unschedule(record as Task).then(close).catch(err=>setError(String(err)))}>
+       Убрать из календаря
+     </button>}
+     {record&&<button type="button" className="danger-btn" disabled={busy} onClick={doRemove}><Trash2 size={15}/> Удалить</button>}
      <button type="button" className="secondary-btn cancel-task-btn" disabled={busy} onClick={close}>Отмена</button>
      <button className="primary-btn" disabled={busy||preventSave} type="submit"><Check size={16}/>{busy?'Сохраняю…':'Сохранить'}</button>
    </div>
@@ -209,8 +218,8 @@ function PriorityGroups({tasks,store,edit,toggle,add}:{tasks:Task[];store:Store;
   </details>}
  </div>;
 }
-function ProjectWorkspace({project,store,onBack,onEdit,onCreate,onOpenTask,onToggle,onOpenGoal,onOpenEvent}:{
- project:Project;store:Store;onBack:()=>void;onEdit:()=>void;
+function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTask,onToggle,onOpenGoal,onOpenEvent}:{
+ project:Project;store:Store;reload:()=>Promise<void>;onBack:()=>void;onEdit:()=>void;
  onCreate:(kind:'tasks'|'goals'|'events')=>void;onOpenTask:(task:Task)=>void;
  onToggle:(task:Task)=>void;onOpenGoal:(goal:Goal)=>void;onOpenEvent:(event:EventItem)=>void;
 }){
@@ -218,6 +227,8 @@ function ProjectWorkspace({project,store,onBack,onEdit,onCreate,onOpenTask,onTog
  const goals=store.goals.filter(g=>g.project_id===project.id);
  const events=store.events.filter(e=>e.project_id===project.id);
  const done=tasks.filter(t=>t.status==='done').length;
+ const nextTask=[...tasks].filter(t=>isOpen(t)).sort((a,b)=>a.priority-b.priority||
+   (a.scheduled_at||'9999').localeCompare(b.scheduled_at||'9999'))[0];
  const assigned=(project.area_ids?.length?project.area_ids:project.area_id?[project.area_id]:[])
    .map(id=>store.areas.find(a=>a.id===id)).filter((a):a is Store['areas'][number]=>Boolean(a));
  return <section className="content project-workspace">
@@ -231,9 +242,11 @@ function ProjectWorkspace({project,store,onBack,onEdit,onCreate,onOpenTask,onTog
      <div className="project-area-tags">{assigned.map(a=><span className="project-area-tag" key={a.id}>{areaEmoji(a.emoji)} {a.title}</span>)}{!assigned.length&&<span className="project-area-tag subdued">Без направления</span>}</div>
      <div className="project-progress"><span>{done} из {tasks.length} задач выполнено</span><strong>{tasks.length?Math.round(done/tasks.length*100):0}%</strong></div>
      <div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div>
+     {nextTask&&<button className="project-next" onClick={()=>onOpenTask(nextTask)}><ArrowRight size={16}/> Следующий шаг: <strong>{nextTask.title}</strong></button>}
      <div className="project-dates"><span>Начало: {project.start_date?fmtDate(project.start_date):'не указано'}</span><span>Срок: {project.due_date?fmtDate(project.due_date):'не указан'}</span></div>
    </div>
    <div className="project-sections">
+     <ProjectMilestones projectId={project.id} items={(store.milestones||[]).filter(item=>item.project_id===project.id)} reload={reload}/>
      <section className="project-section">
        <header><div><h3>Задачи</h3><small>{tasks.length} задач, {tasks.length-done} не выполнены</small></div><button className="secondary-btn" onClick={()=>onCreate('tasks')}><Plus size={15}/> Задача</button></header>
        <TaskList tasks={[...tasks].sort((a,b)=>a.priority-b.priority)} store={store}
@@ -247,6 +260,7 @@ function ProjectWorkspace({project,store,onBack,onEdit,onCreate,onOpenTask,onTog
        <header><div><h3>События</h3><small>{events.length} связанных событий</small></div><button className="secondary-btn" onClick={()=>onCreate('events')}><Plus size={15}/> Событие</button></header>
        {events.length?events.map(e=><button key={e.id} className="project-linked-row" onClick={()=>onOpenEvent(e)}><span><strong>{e.title}</strong><small>{fmtDate(e.starts_at)} · {fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></span><CalendarDays size={17}/></button>):<div className="empty">Событий пока нет</div>}
      </section>
+     <ProjectHistory items={(store.activity||[]).filter(item=>item.project_id===project.id)}/>
    </div>
  </section>;
 }

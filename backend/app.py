@@ -76,6 +76,31 @@ CREATE TABLE IF NOT EXISTS task_occurrences (
   PRIMARY KEY (task_id,occurrence_date)
 );
 CREATE INDEX IF NOT EXISTS idx_occurrences_task ON task_occurrences(task_id);
+CREATE TABLE IF NOT EXISTS task_checklist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0 CHECK(done IN(0,1)),
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS project_milestones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  due_date TEXT,
+  done INTEGER NOT NULL DEFAULT 0 CHECK(done IN(0,1)),
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  happened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS telegram_sent (
+  message_key TEXT PRIMARY KEY,
+  sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
@@ -128,6 +153,18 @@ def connection():
         raise
     finally:
         conn.close()
+
+def record_activity(conn:sqlite3.Connection,project_id:int|None,message:str)->None:
+    if project_id is not None:
+        conn.execute("INSERT INTO activity_log(project_id,message) VALUES (?,?)",
+                     (project_id,message[:300]))
+
+def extra_data(conn:sqlite3.Connection)->dict[str,list[dict]]:
+    return {
+        "checklist":[dict(r) for r in conn.execute("SELECT * FROM task_checklist ORDER BY position,id")],
+        "milestones":[dict(r) for r in conn.execute("SELECT * FROM project_milestones ORDER BY position,id")],
+        "activity":[dict(r) for r in conn.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 500")],
+    }
 
 def setup() -> None:
     if not os.environ.get("APP_PASSWORD"):
@@ -284,6 +321,7 @@ def bootstrap():
             for name in FIELDS
         }
         data["projects"]=[project_with_areas(conn,row) for row in data["projects"]]
+        data.update(extra_data(conn))
         data["occurrences"] = [
             {"task_id":r["task_id"],"occurrence_date":r["occurrence_date"],
              "changes":json.loads(r["changes"])}
@@ -308,6 +346,8 @@ def create(kind: str, payload: dict[str, Any]):
             if kind=="projects":
                 for area_id in (areas if areas is not None else ([values["area_id"]] if values.get("area_id") else [])):
                     conn.execute("INSERT INTO project_areas(project_id,area_id) VALUES (?,?)",(cursor.lastrowid,area_id))
+            project_id=cursor.lastrowid if kind=="projects" else values.get("project_id")
+            record_activity(conn,project_id,"Создано: "+str(values.get("title","")))
         except sqlite3.IntegrityError as exc:
             sql_error(exc)
         return fetch_one(conn, kind, cursor.lastrowid)
@@ -333,6 +373,8 @@ def update(kind: str, item_id: int, payload: dict[str, Any]):
                     conn.execute("DELETE FROM project_areas WHERE project_id=?",(item_id,))
                     for area_id in selected:
                         conn.execute("INSERT INTO project_areas(project_id,area_id) VALUES (?,?)",(item_id,area_id))
+                target=item_id if kind=="projects" else values.get("project_id",previous.get("project_id"))
+                record_activity(conn,target,"Обновлено: "+str(values.get("title",previous.get("title",""))))
             except sqlite3.IntegrityError as exc:
                 sql_error(exc)
         return fetch_one(conn, kind, item_id)
@@ -342,8 +384,10 @@ def delete(kind: str, item_id: int):
     if kind not in FIELDS:
         raise HTTPException(404, "Неизвестный тип записи")
     with connection() as conn:
-        fetch_one(conn, kind, item_id)
+        previous=fetch_one(conn, kind, item_id)
         conn.execute(f"DELETE FROM {kind} WHERE id = ?", (item_id,))
+        if kind!="projects":
+            record_activity(conn,previous.get("project_id"),"Удалено: "+previous["title"])
     return Response(status_code=204)
 
 
@@ -444,6 +488,101 @@ def split_series(task_id:int,payload:dict[str,Any]):
             sql_error(exc)
         return fetch_one(conn,"tasks",new_id)
 
+
+# Project planning resources. All writes use the existing authenticated API.
+def valid_title(value:Any)->str:
+    if not isinstance(value,str) or not value.strip() or len(value)>250:
+        raise HTTPException(422,"Название должно содержать 1–250 символов")
+    return value.strip()
+
+def validate_done(value:Any)->int:
+    if type(value) not in (int,bool) or value not in (0,1,False,True):
+        raise HTTPException(422,"Некорректная отметка выполнения")
+    return int(value)
+
+def owned(conn:sqlite3.Connection,table:str,id:int,parent_field:str,parent_id:int)->dict:
+    record=conn.execute(f"SELECT * FROM {table} WHERE id=? AND {parent_field}=?",(id,parent_id)).fetchone()
+    if not record:raise HTTPException(404,"Запись не найдена")
+    return dict(record)
+
+@app.post("/api/tasks/{task_id}/checklist",status_code=201)
+def add_checklist(task_id:int,payload:dict[str,Any]):
+    if set(payload)!={"title"}:raise HTTPException(422,"Укажите название пункта")
+    title=valid_title(payload["title"])
+    with connection() as conn:
+        task=fetch_one(conn,"tasks",task_id)
+        pos=conn.execute("SELECT COALESCE(MAX(position),0)+1 FROM task_checklist WHERE task_id=?",(task_id,)).fetchone()[0]
+        cur=conn.execute("INSERT INTO task_checklist(task_id,title,position) VALUES (?,?,?)",(task_id,title,pos))
+        record_activity(conn,task["project_id"],"Чек-лист: "+title)
+        return dict(conn.execute("SELECT * FROM task_checklist WHERE id=?",(cur.lastrowid,)).fetchone())
+
+@app.patch("/api/tasks/{task_id}/checklist/{item_id}")
+def edit_checklist(task_id:int,item_id:int,payload:dict[str,Any]):
+    if not payload or set(payload)-{"title","done"}:raise HTTPException(422,"Некорректные поля пункта")
+    values={k:(valid_title(v) if k=="title" else validate_done(v)) for k,v in payload.items()}
+    with connection() as conn:
+        task=fetch_one(conn,"tasks",task_id)
+        prev=owned(conn,"task_checklist",item_id,"task_id",task_id)
+        conn.execute("UPDATE task_checklist SET "+",".join(f"{k}=?" for k in values)+" WHERE id=?",
+                     (*values.values(),item_id))
+        record_activity(conn,task["project_id"],("✓ " if values.get("done")==1 else "Изменён пункт: ")+prev["title"])
+        return dict(conn.execute("SELECT * FROM task_checklist WHERE id=?",(item_id,)).fetchone())
+
+@app.delete("/api/tasks/{task_id}/checklist/{item_id}",status_code=204)
+def remove_checklist(task_id:int,item_id:int):
+    with connection() as conn:
+        task=fetch_one(conn,"tasks",task_id)
+        prev=owned(conn,"task_checklist",item_id,"task_id",task_id)
+        conn.execute("DELETE FROM task_checklist WHERE id=?",(item_id,))
+        record_activity(conn,task["project_id"],"Удалён пункт: "+prev["title"])
+    return Response(status_code=204)
+
+@app.post("/api/projects/{project_id}/milestones",status_code=201)
+def add_milestone(project_id:int,payload:dict[str,Any]):
+    if set(payload)-{"title","due_date"} or "title" not in payload:raise HTTPException(422,"Некорректные поля этапа")
+    title=valid_title(payload["title"])
+    due=payload.get("due_date")
+    if due is not None:
+        try:
+            if date.fromisoformat(due).isoformat()!=due:raise ValueError()
+        except (ValueError,TypeError):raise HTTPException(422,"Неверная дата")
+    with connection() as conn:
+        fetch_one(conn,"projects",project_id)
+        pos=conn.execute("SELECT COALESCE(MAX(position),0)+1 FROM project_milestones WHERE project_id=?",(project_id,)).fetchone()[0]
+        cur=conn.execute("INSERT INTO project_milestones(project_id,title,due_date,position) VALUES (?,?,?,?)",(project_id,title,due,pos))
+        record_activity(conn,project_id,"Новый этап: "+title)
+        return dict(conn.execute("SELECT * FROM project_milestones WHERE id=?",(cur.lastrowid,)).fetchone())
+
+@app.patch("/api/projects/{project_id}/milestones/{item_id}")
+def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any]):
+    if not payload or set(payload)-{"title","due_date","done"}:raise HTTPException(422,"Некорректные поля этапа")
+    values={}
+    for key,value in payload.items():
+        if key=="title":values[key]=valid_title(value)
+        elif key=="done":values[key]=validate_done(value)
+        else:
+            if value is not None:
+                try:
+                    if date.fromisoformat(value).isoformat()!=value:raise ValueError()
+                except (ValueError,TypeError):raise HTTPException(422,"Неверная дата")
+            values[key]=value
+    with connection() as conn:
+        fetch_one(conn,"projects",project_id)
+        prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
+        conn.execute("UPDATE project_milestones SET "+",".join(f"{k}=?" for k in values)+" WHERE id=?",
+                     (*values.values(),item_id))
+        record_activity(conn,project_id,("Этап выполнен: " if values.get("done")==1 else "Этап изменён: ")+prev["title"])
+        return dict(conn.execute("SELECT * FROM project_milestones WHERE id=?",(item_id,)).fetchone())
+
+@app.delete("/api/projects/{project_id}/milestones/{item_id}",status_code=204)
+def remove_milestone(project_id:int,item_id:int):
+    with connection() as conn:
+        fetch_one(conn,"projects",project_id)
+        prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
+        conn.execute("DELETE FROM project_milestones WHERE id=?",(item_id,))
+        record_activity(conn,project_id,"Этап удалён: "+prev["title"])
+    return Response(status_code=204)
+
 @app.get("/api/export")
 def export():
     with connection() as conn:
@@ -456,6 +595,7 @@ def export():
             },
         }
         payload["data"]["projects"]=[project_with_areas(conn,row) for row in payload["data"]["projects"]]
+        payload["data"].update(extra_data(conn))
         payload["data"]["occurrences"]=[
             {"task_id":r["task_id"],"occurrence_date":r["occurrence_date"],
              "changes":json.loads(r["changes"])}
