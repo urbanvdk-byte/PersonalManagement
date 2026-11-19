@@ -35,6 +35,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
  const gesture=useRef<Gesture|null>(null);
  const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const lastTap=useRef<{key:string;at:number}|null>(null);
+ const touchClickUntil=useRef(0);
  const tapTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const previewRef=useRef<CalendarPreview|null>(null);
  const busy=useRef(false);
@@ -181,6 +182,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    gesture.current=null;
    if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
    if(!g.active){
+     if(e.pointerType==='touch')touchClickUntil.current=Date.now()+500;
      if(e.pointerType==='touch'&&g.mode==='move'){
        const key=g.task.id+'@'+(g.task.occurrence_date||'');
        const at=Date.now();
@@ -275,7 +277,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             onLostPointerCapture={task?e=>{if(gesture.current?.pointerId===e.pointerId)cancel(e)}:undefined}
             onClick={e=>{
               e.stopPropagation();
-              if(task){if(e.detail===0)edit({kind:'tasks',record:b.record as Task});}
+              if(task){if(e.detail===0&&Date.now()>touchClickUntil.current)edit({kind:'tasks',record:b.record as Task});}
               else edit({kind:'events',record:b.record});
             }}
             onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();edit({kind:b.kind,record:b.record});}}}
