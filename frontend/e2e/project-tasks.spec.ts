@@ -4,7 +4,7 @@ const storage=page=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)||'{}'),K
 test('task without time saves in list but never in calendar',async({page})=>{
  await page.goto('/');
  await page.locator('.nav-item',{hasText:'Все задачи'}).click();
- await page.getByRole('button',{name:'Добавить задачу'}).click();
+ await page.getByRole('button',{name:'Добавить задачу',exact:true}).click();
  await page.locator('.drawer input').first().fill('Без времени');
  await expect(page.locator('.drawer button[type="submit"]')).toBeEnabled();
  await page.locator('.drawer button[type="submit"]').click();

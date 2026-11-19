@@ -162,10 +162,12 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    if(distance>3)g.moved=true;
    if(!g.moved)return;
    e.preventDefault();
-   autoScroll(e.clientX,e.clientY);
+   // Calculate from the pre-scroll geometry. Auto-scrolling first can add
+   // an unintended 15-minute jump to a touch drag near the screen edge.
    const next=project(g,e.clientX,e.clientY);
    g.preview=next;
    showPreview(next);
+   autoScroll(e.clientX,e.clientY);
  }
  async function release(e:ReactPointerEvent<HTMLButtonElement>){
    const g=gesture.current;
@@ -178,7 +180,9 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      edit({kind:'tasks',record:g.task});
      return;
    }
-   const result=g.moved?project(g,e.clientX,e.clientY):g.preview;
+   // Commit exactly the preview the user saw. Re-projecting after an edge
+   // scroll may alter the time without any further pointer movement.
+   const result=g.preview;
    if(!g.moved||!isPreviewChanged(g.day,g.minute,g.duration,result)){
      showPreview(null);
      return;
