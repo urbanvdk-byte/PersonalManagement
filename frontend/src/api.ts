@@ -33,7 +33,7 @@ function initialDemo():Store{
       {id:3,title:'Дом и быт',color:'#f0b23c',emoji:'🏠',created_at}
     ],
     projects:[
-      {id:1,title:'Демонстрационный проект',area_id:1,description:'Пример связи проекта с задачами и целью',status:'active',start_date:today,due_date:dayKey(addDays(mon,18)),created_at}
+      {id:1,title:'Демонстрационный проект',area_id:1,area_ids:[1],description:'Пример связи проекта с задачами и целью',status:'active',start_date:today,due_date:dayKey(addDays(mon,18)),created_at}
     ],
     goals:[
       {id:1,title:'Провести 4 тренировки за месяц',area_id:2,project_id:null,description:'Пример измеримой цели',period_start:goalStart,period_end:goalEnd,start_value:0,target_value:4,current_value:1,unit:'тренировки',created_at},
@@ -59,6 +59,9 @@ function loadDemo():Store{
       const data=JSON.parse(raw) as Store;
       if(['areas','projects','goals','tasks','events'].every(k=>Array.isArray(data[k as Kind]))){
         if(!Array.isArray(data.occurrences))data.occurrences=[];
+        for(const project of data.projects){
+          if(!Array.isArray(project.area_ids))project.area_ids=project.area_id?[project.area_id]:[];
+        }
         return data;
       }
       throw Error('Некорректный формат данных демо');
@@ -74,21 +77,27 @@ function storeDemo(data:Store){localStorage.setItem(STORAGE_KEY,JSON.stringify(d
 type Row=Record<string,unknown>;
 const defaults:Record<Kind,Row>={
   areas:{color:'#4689db',emoji:'📁'},
-  projects:{area_id:null,description:'',status:'active',start_date:null,due_date:null},
+  projects:{area_id:null,area_ids:[],description:'',status:'active',start_date:null,due_date:null},
   goals:{area_id:null,project_id:null,description:'',period_start:null,period_end:null,start_value:0,target_value:1,current_value:0,unit:''},
   tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:DEFAULT_TASK_COLOR},
   events:{area_id:null,project_id:null,notes:'',color:'#f3bb28'}
 };
 async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
   if('title' in values&&(!String(values.title||'').trim()))throw Error('Укажите название');
+  if(kind==='projects' && values.area_ids!==undefined){
+    if(!Array.isArray(values.area_ids)||values.area_ids.length>100||
+       values.area_ids.some(x=>typeof x!=='number'||!Number.isInteger(x)||x<1)||
+       new Set(values.area_ids).size!==values.area_ids.length)
+      throw Error('Выберите направления проекта');
+    values.area_id=values.area_ids[0]??null;
+  }
   if(kind==='tasks'){
     if(values.recurrence!==undefined&&!['','daily','weekly','monthly','yearly'].includes(String(values.recurrence)))
       throw Error('Некорректное правило повторения');
     if(values.recurrence_until!=null&&!/^\d{4}-\d{2}-\d{2}$/.test(String(values.recurrence_until)))
       throw Error('Некорректная дата окончания повторений');
-    if((!id || Object.prototype.hasOwnProperty.call(values,'scheduled_at'))&&!hasScheduledTime(values.scheduled_at)){
-      throw Error('Укажите обязательные дату и время задачи');
-    }
+    if(values.scheduled_at!==undefined&&values.scheduled_at!==null&&!hasScheduledTime(values.scheduled_at))
+      throw Error('Укажите корректные дату и время задачи');
     if(Object.prototype.hasOwnProperty.call(values,'duration_minutes')&&!isValidTaskDuration(values.duration_minutes)){
       throw Error('Продолжительность: минимум 30 минут, шаг 15 минут');
     }
@@ -99,12 +108,22 @@ async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
   if(id){
     const row=list.find(x=>x.id===id);
     if(!row)throw Error('Запись не найдена');
+    if(kind==='tasks'&&String(values.recurrence??row.recurrence??'')&&!String(values.scheduled_at??row.scheduled_at??''))
+      throw Error('Для повторяющейся задачи нужна дата и время');
     Object.assign(row,values);
+    if(kind==='projects'){
+      if(values.area_ids!==undefined)row.area_id=(values.area_ids as number[])[0]??null;
+      else if(values.area_id!==undefined)row.area_ids=values.area_id?[values.area_id]:[];
+    }
     if(kind==='tasks')row.updated_at=stamp;
   }else{
     if(!String(values.title||'').trim())throw Error('Укажите название');
     if(kind==='events'&&(!values.starts_at||!values.ends_at||String(values.starts_at)>=String(values.ends_at)))
       throw Error('Укажите корректное начало и окончание события');
+    if(kind==='tasks'&&values.recurrence&&!values.scheduled_at)
+      throw Error('Для повторяющейся задачи нужна дата и время');
+    if(kind==='projects'&&values.area_ids===undefined)
+      values.area_ids=values.area_id?[values.area_id]:[];
     const newId=Math.max(0,...list.map(x=>Number(x.id)||0))+1;
     list.push({...defaults[kind],...values,id:newId,created_at:stamp,...(kind==='tasks'?{updated_at:stamp}:{})});
   }
@@ -117,7 +136,10 @@ async function demoRemove(kind:Kind,id:number):Promise<void>{
   if(idx<0)throw Error('Запись не найдена');
   list.splice(idx,1);
   if(kind==='areas'){
-    data.projects.forEach(x=>{if(x.area_id===id)x.area_id=null});
+    data.projects.forEach(x=>{
+      x.area_ids=(x.area_ids||[]).filter(areaId=>areaId!==id);
+      x.area_id=x.area_ids[0]??null;
+    });
     data.goals.forEach(x=>{if(x.area_id===id)x.area_id=null});
     data.tasks.forEach(x=>{if(x.area_id===id)x.area_id=null});
     data.events.forEach(x=>{if(x.area_id===id)x.area_id=null});

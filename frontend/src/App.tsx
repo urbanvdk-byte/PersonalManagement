@@ -8,7 +8,7 @@ import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
-import type { Editing, EventItem, Goal, Kind, Page, Store, Task } from './types';
+import type { Editing, EventItem, Goal, Kind, Page, Project, Store, Task } from './types';
 
 const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:[]};
 const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
@@ -33,7 +33,9 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
  const instance=kind==='tasks'&&(record as Task|undefined)?.occurrence_date?record as Task:null;
  const [scope,setScope]=useState<Scope>(instance?'one':'all');
- const missingTaskTime=kind==='tasks'&&!hasScheduledTime(form.scheduled_at);
+ const scheduleRequired=kind==='tasks'&&Boolean(editing.requireSchedule||form.recurrence);
+ const hasTimeInput=kind==='tasks'&&form.scheduled_at!==null&&form.scheduled_at!==undefined&&form.scheduled_at!=='';
+ const missingTaskTime=kind==='tasks'&&(scheduleRequired||hasTimeInput)&&!hasScheduledTime(form.scheduled_at);
  const invalidTaskDuration=kind==='tasks'&&!isValidTaskDuration(form.duration_minutes??60);
  const missingTitle=!String(form.title??'').trim();
  const preventSave=missingTitle||missingTaskTime||invalidTaskDuration;
@@ -42,12 +44,12 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:
  const choices=(key:string,label:string,opts:Record<string,string>)=><label className="form-field"><span>{label}</span><select value={String(form[key]??Object.keys(opts)[0])} onChange={e=>set(key,e.target.value)}>{Object.entries(opts).map(([value,name])=><option key={value} value={value}>{name}</option>)}</select></label>;
  const refs=(key:string,label:string,items:{id:number;title:string}[])=><label className="form-field"><span>{label}</span><select value={String(form[key]??'')} onChange={e=>set(key,e.target.value?Number(e.target.value):null)}><option value="">Не выбрано</option>{items.map(x=><option key={x.id} value={x.id}>{x.title}</option>)}</select></label>;
  const dateField=(key:string,label:string,time=false)=>{
-   const required=kind==='tasks'&&key==='scheduled_at';
-   const invalid=required&&missingTaskTime;
+   const required=kind==='tasks'&&key==='scheduled_at'&&scheduleRequired;
+   const invalid=kind==='tasks'&&key==='scheduled_at'&&missingTaskTime;
    return <label className={'form-field '+(invalid?'required-missing':'')}><span>{label}{required?' *':''}</span>
      <input type={time?'datetime-local':'date'} value={String(form[key]??'').slice(0,time?16:10)}
        aria-invalid={invalid} required={required} onChange={e=>set(key,e.target.value||null)}/>
-     {invalid&&<small className="field-error" role="alert">Укажите дату и время — без них задача не сохранится.</small>}
+     {invalid&&<small className="field-error" role="alert">Укажите корректные дату и время — это обязательно для календаря и повторений.</small>}
    </label>;
  };
  const number=(key:string,label:string,defaultValue=0)=>{
@@ -99,8 +101,24 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:
      {field('emoji','Или вставьте свой emoji','Например, 🌞')}
    </>}
    {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'||kind==='events'?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'||kind==='events'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'||kind==='events'?'notes':'description',e.target.value)}/></label>}
-   {kind!=='areas'&&<div className="two">{refs('area_id','Направление',store.areas)}{kind!=='projects'&&refs('project_id','Проект',store.projects)}</div>}
-   {kind==='projects'&&<>{choices('status','Статус проекта',projectStatuses)}<div className="two">{dateField('start_date','Начало')}{dateField('due_date','Срок')}</div></>}
+   {kind!=='areas'&&kind!=='projects'&&<div className="two">{refs('area_id','Направление',store.areas)}{refs('project_id','Проект',store.projects)}</div>}
+   {kind==='projects'&&<>
+     <div className="form-field"><span>Направления проекта (можно несколько)</span>
+       <div className="project-areas-picker">
+         {store.areas.map(a=>{
+           const ids=Array.isArray(form.area_ids)?form.area_ids as number[]:
+             form.area_id?[Number(form.area_id)]:[];
+           return <label key={a.id}><input type="checkbox" checked={ids.includes(a.id)} onChange={e=>{
+             const next=e.target.checked?[...ids,a.id]:ids.filter(id=>id!==a.id);
+             setForm(prev=>({...prev,area_ids:next,area_id:next[0]??null}));
+           }}/><span>{areaEmoji(a.emoji)} {a.title}</span></label>;
+         })}
+         {!store.areas.length&&<small>Направлений пока нет. Проект можно создать без них.</small>}
+       </div>
+     </div>
+     {choices('status','Статус проекта',projectStatuses)}
+     <div className="two">{dateField('start_date','Начало')}{dateField('due_date','Срок')}</div>
+   </>}
    {kind==='goals'&&<><div className="two">{dateField('period_start','Начало периода')}{dateField('period_end','Конец периода')}</div><div className="two">{number('start_value','Исходное')}{number('target_value','Цель',1)}</div><div className="two">{number('current_value','Достигнуто')}{field('unit','Единица','шт., км, ₽')}</div></>}
    {kind==='tasks'&&<>
     {refs('goal_id','Цель',store.goals)}
@@ -131,7 +149,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring}:
       {choices('recurrence','Повторять',RECURRENCES)}
       {String(form.recurrence??'')!==''&&dateField('recurrence_until','Повторять до (необязательно)')}
     </>}
-    <p className="form-help">Дата выполнения и крайний срок — разные поля. Повторения отображаются виртуально и не создают тысячи задач.</p>
+    <p className="form-help">{editing.requireSchedule?'Для задачи из календаря укажите дату и время.':'Можно оставить время пустым: задача сохранится в списке и не появится в календаре.'} Повторяющиеся задачи всегда требуют даты. Крайний срок и запланированное время — разные поля.</p>
    </>}
    {kind==='events'&&<><div className="two">{dateField('starts_at','Начало *',true)}{dateField('ends_at','Окончание *',true)}</div><label className="form-field"><span>Цвет</span><input type="color" value={String(form.color??'#f3bb28')} onChange={e=>set('color',e.target.value)}/></label></>}
    {error&&<p role="alert" className="error">{error}</p>}
@@ -149,6 +167,89 @@ function TaskList({tasks,store,edit,toggle,message='Здесь пока нет �
    <span className={'priority p'+t.priority}>P{t.priority}</span>
   </div>)}</div>
 }
+
+const priorityMeta=[
+ ['Важно и срочно','Дела, требующие внимания в первую очередь'],
+ ['Важно, не срочно','Работа над главными целями'],
+ ['Срочно, не важно','Можно делегировать или упростить'],
+ ['Не важно, не срочно','Остальные задачи']
+] as const;
+function PriorityGroups({tasks,store,edit,toggle,add}:{tasks:Task[];store:Store;
+ edit:(e:Editing)=>void;toggle:(task:Task)=>void;add:(priority:number)=>void}){
+ const completed=tasks.filter(task=>task.status==='done');
+ const cancelled=tasks.filter(task=>task.status==='cancelled');
+ return <div className="priority-groups">
+  <div className="matrix task-priority-matrix">
+   {priorityMeta.map(([title,hint],index)=>{
+     const priority=index+1;
+     const items=tasks.filter(task=>isOpen(task)&&task.priority===priority);
+     return <details className={'matrix-cell collapsible-priority m'+priority}
+       key={priority} open={priority<=2?true:undefined}>
+       <summary className="priority-summary">
+        <span className={'priority p'+priority}>P{priority}</span>
+        <span className="priority-summary-text"><strong>{title}</strong><small>{hint}</small></span>
+        <span className="priority-count">{items.length}</span>
+        <ChevronRight className="priority-chevron" size={18}/>
+       </summary>
+       <div className="priority-content">
+         <TaskList tasks={items} store={store} edit={edit} toggle={toggle}
+           message="В этом приоритете задач нет"/>
+         <button className="matrix-add" onClick={()=>add(priority)}><Plus size={15}/> Добавить задачу P{priority}</button>
+       </div>
+     </details>;
+   })}
+  </div>
+  <details className="completed-group">
+    <summary className="priority-summary"><Check size={19}/><span className="priority-summary-text"><strong>Выполненные</strong><small>История завершённых задач</small></span><span className="priority-count">{completed.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
+    <TaskList tasks={completed} store={store} edit={edit} toggle={toggle} message="Выполненных задач пока нет"/>
+  </details>
+  {cancelled.length>0&&<details className="completed-group cancelled-group">
+    <summary className="priority-summary"><X size={19}/><span className="priority-summary-text"><strong>Отменённые</strong></span><span className="priority-count">{cancelled.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
+    <TaskList tasks={cancelled} store={store} edit={edit} toggle={toggle}/>
+  </details>}
+ </div>;
+}
+function ProjectWorkspace({project,store,onBack,onEdit,onCreate,onOpenTask,onToggle,onOpenGoal,onOpenEvent}:{
+ project:Project;store:Store;onBack:()=>void;onEdit:()=>void;
+ onCreate:(kind:'tasks'|'goals'|'events')=>void;onOpenTask:(task:Task)=>void;
+ onToggle:(task:Task)=>void;onOpenGoal:(goal:Goal)=>void;onOpenEvent:(event:EventItem)=>void;
+}){
+ const tasks=store.tasks.filter(t=>t.project_id===project.id);
+ const goals=store.goals.filter(g=>g.project_id===project.id);
+ const events=store.events.filter(e=>e.project_id===project.id);
+ const done=tasks.filter(t=>t.status==='done').length;
+ const assigned=(project.area_ids?.length?project.area_ids:project.area_id?[project.area_id]:[])
+   .map(id=>store.areas.find(a=>a.id===id)).filter((a):a is Store['areas'][number]=>Boolean(a));
+ return <section className="content project-workspace">
+   <div className="project-back-row">
+    <button className="secondary-btn" onClick={onBack}><ChevronLeft size={17}/> Все проекты</button>
+    <button className="secondary-btn" onClick={onEdit}>Редактировать проект</button>
+   </div>
+   <div className="project-hero">
+     <div className="project-hero-title"><FolderKanban size={26}/><div><small>ПРОЕКТ · {projectStatuses[project.status]||project.status}</small><h2>{project.title}</h2></div></div>
+     <p>{project.description||'Описание проекта пока не заполнено.'}</p>
+     <div className="project-area-tags">{assigned.map(a=><span className="project-area-tag" key={a.id}>{areaEmoji(a.emoji)} {a.title}</span>)}{!assigned.length&&<span className="project-area-tag subdued">Без направления</span>}</div>
+     <div className="project-progress"><span>{done} из {tasks.length} задач выполнено</span><strong>{tasks.length?Math.round(done/tasks.length*100):0}%</strong></div>
+     <div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div>
+     <div className="project-dates"><span>Начало: {project.start_date?fmtDate(project.start_date):'не указано'}</span><span>Срок: {project.due_date?fmtDate(project.due_date):'не указан'}</span></div>
+   </div>
+   <div className="project-sections">
+     <section className="project-section">
+       <header><div><h3>Задачи</h3><small>{tasks.length} задач, {tasks.length-done} не выполнены</small></div><button className="secondary-btn" onClick={()=>onCreate('tasks')}><Plus size={15}/> Задача</button></header>
+       <TaskList tasks={[...tasks].sort((a,b)=>a.priority-b.priority)} store={store}
+         edit={e=>onOpenTask(e.record as Task)} toggle={onToggle} message="Связанных задач пока нет"/>
+     </section>
+     <section className="project-section">
+       <header><div><h3>Цели</h3><small>{goals.length} связанных целей</small></div><button className="secondary-btn" onClick={()=>onCreate('goals')}><Plus size={15}/> Цель</button></header>
+       {goals.length?goals.map(goal=><button key={goal.id} className="project-linked-row" onClick={()=>onOpenGoal(goal)}><span><strong>{goal.title}</strong><small>{goal.current_value} / {goal.target_value} {goal.unit}</small></span><span>{percent(goal)}%</span></button>):<div className="empty">Целей пока нет</div>}
+     </section>
+     <section className="project-section">
+       <header><div><h3>События</h3><small>{events.length} связанных событий</small></div><button className="secondary-btn" onClick={()=>onCreate('events')}><Plus size={15}/> Событие</button></header>
+       {events.length?events.map(e=><button key={e.id} className="project-linked-row" onClick={()=>onOpenEvent(e)}><span><strong>{e.title}</strong><small>{fmtDate(e.starts_at)} · {fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></span><CalendarDays size={17}/></button>):<div className="empty">Событий пока нет</div>}
+     </section>
+   </div>
+ </section>;
+}
 export default function App(){
  const [data,setData]=useState<Store>(empty);const [page,setPage]=useState<Page>('calendar');
  const [selectedDay,setSelectedDay]=useState(dayKey(new Date()));
@@ -157,6 +258,7 @@ export default function App(){
  const week=weekStart(makeDay(selectedDay));
  const [editing,setEditing]=useState<Editing|null>(null);const [error,setError]=useState('');const [loading,setLoading]=useState(true);
  const [search,setSearch]=useState('');const [mobile,setMobile]=useState(false);
+ const [selectedProjectId,setSelectedProjectId]=useState<number|null>(null);
  const load=async()=>setData(await api.load());
  useEffect(()=>{load().catch(e=>setError(String(e))).finally(()=>setLoading(false))},[]);
  const save=async(kind:Kind,payload:Record<string,unknown>,id?:number)=>{await api.save(kind,payload,id);await load()};
@@ -199,13 +301,14 @@ export default function App(){
   }catch(e){setError(String(e))}
  };
  const open=(kind:Kind,defaults:Record<string,unknown>={})=>{
-  const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR,recurrence:'',recurrence_until:null}:kind==='projects'?{status:'active'}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:kind==='events'?{color:'#f3bb28'}:{emoji:'📁'};
-  setEditing({kind,defaults:{...basic,...defaults}});
+  const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR,recurrence:'',recurrence_until:null}:
+    kind==='projects'?{status:'active',area_ids:[]}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:
+    kind==='events'?{color:'#f3bb28'}:{emoji:'📁'};
+  setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&page==='calendar'});
  };
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
  const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
- const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay)
-   .concat(active.filter(t=>!t.recurrence&&!t.scheduled_at&&t.due_at?.startsWith(selectedDay)));
+ const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay);
  const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
@@ -213,7 +316,6 @@ export default function App(){
    const first=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth(),1));
    const last=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth()+1,0));
    expandTasks(data.tasks.filter(isOpen),data.occurrences||[],first,last).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10))});
-   data.tasks.filter(t=>isOpen(t)&&!t.recurrence&&!t.scheduled_at).forEach(t=>{if(t.due_at)days.add(t.due_at.slice(0,10))});
    data.events.forEach(e=>days.add(e.starts_at.slice(0,10)));
    return days;
  },[data,displayMonth]);
@@ -238,7 +340,7 @@ export default function App(){
   <aside className={'sidebar '+(mobile?'open':'')}>
    <div className="brand"><div className="brand-icon"><Target size={23}/></div><div><strong>PersonalManagement</strong><span>Мой центр управления</span></div></div>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
-   <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{setPage(p.id);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
+   <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
    <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}

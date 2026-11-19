@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS projects (
   start_date TEXT, due_date TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS project_areas (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  area_id INTEGER NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
+  PRIMARY KEY (project_id,area_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_areas_area ON project_areas(area_id);
 CREATE TABLE IF NOT EXISTS goals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
@@ -87,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_events_starts ON events(starts_at);
 
 FIELDS = {
     "areas": {"title", "color", "emoji"},
-    "projects": {"area_id", "title", "description", "status", "start_date", "due_date"},
+    "projects": {"area_id", "area_ids", "title", "description", "status", "start_date", "due_date"},
     "goals": {"area_id", "project_id", "title", "description", "period_start", "period_end", "start_value", "target_value", "current_value", "unit"},
     "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "recurrence_until", "color"},
     "events": {"area_id", "project_id", "title", "notes", "starts_at", "ends_at", "color"},
@@ -138,6 +144,9 @@ def setup() -> None:
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        # Preserve the former project's single area association.
+        conn.execute("""INSERT OR IGNORE INTO project_areas(project_id,area_id)
+                        SELECT id,area_id FROM projects WHERE area_id IS NOT NULL""")
 
 @app.on_event("startup")
 def startup() -> None:
@@ -200,6 +209,9 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
         elif key == "duration_minutes":
             if type(value) is not int or not 30 <= value <= 1440 or value % 15:
                 raise HTTPException(422, "Продолжительность: от 30 до 1440 минут, шаг 15 минут")
+        elif key == "area_ids":
+            if kind != "projects" or not isinstance(value,list) or len(value)>100 or any(type(area_id) is not int or area_id<1 for area_id in value) or len(value)!=len(set(value)):
+                raise HTTPException(422, "Направления проекта должны быть уникальными идентификаторами")
         elif key in ID_KEYS:
             if value is not None and (type(value) is not int or value < 1):
                 raise HTTPException(422, f"Некорректный идентификатор {key}")
@@ -230,21 +242,32 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
     if kind == "tasks":
         # Only newly created tasks must always have a schedule. Existing legacy
         # unscheduled tasks remain readable and can be marked done or deleted.
-        if creating and not payload.get("scheduled_at"):
-            raise HTTPException(422, "Укажите обязательные дату и время задачи")
-        if "scheduled_at" in payload and not payload["scheduled_at"]:
-            raise HTTPException(422, "Дата и время задачи обязательны")
+        if "scheduled_at" in payload and payload["scheduled_at"] == "":
+            raise HTTPException(422, "Неверный формат времени — оставьте поле пустым или заполните полностью")
+        if payload.get("recurrence") and not payload.get("scheduled_at") and creating:
+            raise HTTPException(422, "Для повторяющейся задачи нужно назначить дату и время")
     if kind == "events" and creating and (not payload.get("starts_at") or not payload.get("ends_at")):
         raise HTTPException(422, "Нужно указать начало и окончание события")
     if kind == "events" and payload.get("starts_at") and payload.get("ends_at") and payload["starts_at"] >= payload["ends_at"]:
         raise HTTPException(422, "Окончание должно быть позднее начала")
     return payload
 
+def project_with_areas(conn:sqlite3.Connection,row:dict):
+    row["area_ids"]=[r["area_id"] for r in conn.execute(
+        "SELECT area_id FROM project_areas WHERE project_id=? ORDER BY area_id",(row["id"],))]
+    return row
+
+def validate_task_schedule(conn:sqlite3.Connection,values:dict,prior:dict|None=None):
+    combined={**(prior or {}),**values}
+    if combined.get("recurrence") and not combined.get("scheduled_at"):
+        raise HTTPException(422,"Для повторяющейся задачи нужна дата и время")
+
 def fetch_one(conn: sqlite3.Connection, kind: str, item_id: int):
     row = conn.execute(f"SELECT * FROM {kind} WHERE id = ?", (item_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "Запись не найдена")
-    return dict(row)
+    data=dict(row)
+    return project_with_areas(conn,data) if kind=="projects" else data
 
 def sql_error(exc: sqlite3.IntegrityError):
     raise HTTPException(409, "Невозможно сохранить: проверьте связи и обязательные поля") from exc
@@ -260,6 +283,7 @@ def bootstrap():
             name: [dict(r) for r in conn.execute(f"SELECT * FROM {name} ORDER BY id DESC")]
             for name in FIELDS
         }
+        data["projects"]=[project_with_areas(conn,row) for row in data["projects"]]
         data["occurrences"] = [
             {"task_id":r["task_id"],"occurrence_date":r["occurrence_date"],
              "changes":json.loads(r["changes"])}
@@ -272,11 +296,18 @@ def create(kind: str, payload: dict[str, Any]):
     values = validate(kind, payload.copy(), creating=True)
     if not values:
         raise HTTPException(422, "Пустой запрос")
+    areas=values.pop("area_ids",None) if kind=="projects" else None
+    if kind=="projects" and areas is not None:
+        values["area_id"]=areas[0] if areas else None
     cols = ", ".join(values)
     params = ", ".join("?" for _ in values)
     with connection() as conn:
+        if kind=="tasks":validate_task_schedule(conn,values)
         try:
             cursor = conn.execute(f"INSERT INTO {kind} ({cols}) VALUES ({params})", tuple(values.values()))
+            if kind=="projects":
+                for area_id in (areas if areas is not None else ([values["area_id"]] if values.get("area_id") else [])):
+                    conn.execute("INSERT INTO project_areas(project_id,area_id) VALUES (?,?)",(cursor.lastrowid,area_id))
         except sqlite3.IntegrityError as exc:
             sql_error(exc)
         return fetch_one(conn, kind, cursor.lastrowid)
@@ -284,14 +315,24 @@ def create(kind: str, payload: dict[str, Any]):
 @app.patch("/api/{kind}/{item_id}")
 def update(kind: str, item_id: int, payload: dict[str, Any]):
     values = validate(kind, payload.copy())
+    areas=values.pop("area_ids",None) if kind=="projects" else None
+    if kind=="projects" and areas is not None:
+        values["area_id"]=areas[0] if areas else None
     with connection() as conn:
-        fetch_one(conn, kind, item_id)
-        if values:
+        previous=fetch_one(conn,kind,item_id)
+        if kind=="tasks":validate_task_schedule(conn,values,previous)
+        if values or areas is not None:
             if kind == "tasks":
                 values["updated_at"] = datetime.now().isoformat(timespec="seconds")
-            assignments = ", ".join(f"{col} = ?" for col in values)
             try:
-                conn.execute(f"UPDATE {kind} SET {assignments} WHERE id = ?", (*values.values(), item_id))
+                if values:
+                    assignments = ", ".join(f"{col} = ?" for col in values)
+                    conn.execute(f"UPDATE {kind} SET {assignments} WHERE id = ?", (*values.values(), item_id))
+                if kind=="projects" and (areas is not None or "area_id" in values):
+                    selected=areas if areas is not None else ([values["area_id"]] if values.get("area_id") else [])
+                    conn.execute("DELETE FROM project_areas WHERE project_id=?",(item_id,))
+                    for area_id in selected:
+                        conn.execute("INSERT INTO project_areas(project_id,area_id) VALUES (?,?)",(item_id,area_id))
             except sqlite3.IntegrityError as exc:
                 sql_error(exc)
         return fetch_one(conn, kind, item_id)
@@ -414,6 +455,7 @@ def export():
                 for kind in FIELDS
             },
         }
+        payload["data"]["projects"]=[project_with_areas(conn,row) for row in payload["data"]["projects"]]
         payload["data"]["occurrences"]=[
             {"task_id":r["task_id"],"occurrence_date":r["occurrence_date"],
              "changes":json.loads(r["changes"])}
