@@ -40,7 +40,7 @@ export default function CalendarBacklog({tasks,onSchedule,onOpen}:{
    const pointerId=e.pointerId;
    drag.current={pointerId,task,x:e.clientX,y:e.clientY,active:false};
    setError('');
-   if(e.pointerType!=='mouse')timer.current=setTimeout(()=>{
+   timer.current=setTimeout(()=>{
      if(drag.current?.pointerId===pointerId)drag.current.active=true;
    },420);
    const move=(event:PointerEvent)=>{
