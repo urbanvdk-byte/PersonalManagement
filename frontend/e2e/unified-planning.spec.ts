@@ -68,12 +68,17 @@ test('dragging an unscheduled task onto a calendar day assigns a real time',asyn
  const scroller=page.locator('.calendar-scroll');
  const track=page.locator('[data-calendar-day]').first();
  await expect(backlog).toBeVisible();
+ await backlog.scrollIntoViewIfNeeded();
  const original=await state(page);
  const task=original.tasks.find(t=>t.title==='Задача для перетаскивания');
  expect(task.scheduled_at).toBeNull();
  const origin=await backlog.boundingBox(),dest=await track.boundingBox(),viewport=await scroller.boundingBox();
  expect(origin).not.toBeNull();expect(dest).not.toBeNull();expect(viewport).not.toBeNull();
  const startX=origin!.x+25,startY=origin!.y+origin!.height/2;
+ console.log('START_HIT',JSON.stringify(await page.evaluate(({x,y})=>({
+  hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,300),
+  viewport:{height:innerHeight,width:innerWidth}
+ }),{x:startX,y:startY})));
  const endX=dest!.x+Math.min(20,dest!.width/3),endY=viewport!.y+viewport!.height/2;
  await page.mouse.move(startX,startY);
  await page.mouse.down();
