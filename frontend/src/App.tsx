@@ -383,13 +383,13 @@ export default function App(){
  return <div className="app">
   <aside className={'sidebar '+(mobile?'open':'')}>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
-   <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
+   <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{if(p.id==='schedule')goToDay(dayKey(new Date()));setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
    <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
    <header className="topbar"><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><h1>{title}</h1></div></div>
-    <div className="top-actions">{(page==='calendar'||page==='schedule')&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
+    <div className="top-actions">{(page==='calendar'||page==='schedule')&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span className="week-range-desktop">{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span><span className="week-range-mobile">{period.start&&period.end?fmtDate(period.start,{day:'numeric'})+'–'+fmtDate(period.end,{day:'numeric',month:'short'}):fmtDate(week,{day:'numeric'})+'–'+fmtDate(addDays(week,6),{day:'numeric',month:'short'})}</span></div>}
      <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
@@ -399,12 +399,12 @@ export default function App(){
     <div className="overview-card"><div className="overview-symbol"><FolderKanban size={18}/></div><div><small>Активных проектов</small><strong>{data.projects.filter(p=>p.status==='active').length} <span>проектов</span></strong></div></div>
     <div className="overview-card"><div className="overview-symbol"><Target size={18}/></div><div><small>Цели на контроле</small><strong>{data.goals.length} <span>целей</span></strong></div></div>
    </section>
-   <form className="quick-capture" onSubmit={quickCapture} aria-label="Быстро добавить задачу">
+   {page!=='schedule'&&<form className="quick-capture" onSubmit={quickCapture} aria-label="Быстро добавить задачу">
      <Plus size={19}/>
      <input aria-label="Быстрая запись задачи" placeholder="Запишите дело и нажмите Enter — без даты, в задачи"
        value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} maxLength={250}/>
      <button type="submit" disabled={!quickTitle.trim()||quickBusy}>Добавить</button>
-   </form>
+   </form>}
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
@@ -504,7 +504,7 @@ export default function App(){
        {id:'projects' as Page,title:'Проекты',icon:FolderKanban}
      ].map(link=><button key={link.id} aria-current={page===link.id?'page':undefined}
        className={page===link.id?'active':''}
-       onClick={()=>{setPage(link.id);setSelectedProjectId(null);setMobile(false);}}>
+       onClick={()=>{if(link.id==='schedule')goToDay(dayKey(new Date()));setPage(link.id);setSelectedProjectId(null);setMobile(false);}}>
        <link.icon size={21}/><span>{link.title}</span>
      </button>)}
      <button aria-label="Другие разделы" onClick={()=>setMobile(true)}><MoreHorizontal size={21}/><span>Ещё</span></button>
