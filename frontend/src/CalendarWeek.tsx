@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent} from 'react';
+import {ArrowRight} from 'lucide-react';
 import {dayKey,makeDay} from './date';
 import {layoutTimedItems} from './calendarLayout';
 import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
@@ -16,6 +17,8 @@ type Props={
   start:Date;selection:DateSelection;store:Store;day:string;
   setDay:(date:string)=>void;edit:(item:Editing)=>void;slot:(date:Date)=>void;
   updateTask:(task:Task,changes:Record<string,unknown>)=>Promise<void>;
+  onTomorrow:(task:Task)=>Promise<void>;
+  onDropTask:(taskId:number,when:string)=>Promise<void>;
 };
 type Gesture={
   pointerId:number;task:Task;mode:GestureMode;
@@ -23,7 +26,7 @@ type Gesture={
   active:boolean;moved:boolean;preview:CalendarPreview;
 };
 
-export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask}:Props){
+export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow,onDropTask}:Props){
  const days=selectedCalendarDays(start,selection);
  const hours=Array.from({length:END-START},(_,i)=>i+START);
  const [now,setNow]=useState(()=>new Date());
@@ -32,6 +35,10 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
  const scrollRef=useRef<HTMLDivElement|null>(null);
  const gesture=useRef<Gesture|null>(null);
  const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ const lastTap=useRef<{key:string;at:number}|null>(null);
+ const touchClickUntil=useRef(0);
+ const suppressGridUntil=useRef(0);
+ const tapTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const previewRef=useRef<CalendarPreview|null>(null);
  const busy=useRef(false);
 
@@ -47,7 +54,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    const hour=new Date().getHours();
    scrollRef.current.scrollTop=Math.max(0,((hour>=7?hour-2:7)-START)*HOUR_HEIGHT);
  },[]);
- useEffect(()=>()=>{if(timer.current!==null)clearTimeout(timer.current);},[]);
+ useEffect(()=>()=>{if(timer.current!==null)clearTimeout(timer.current);if(tapTimer.current!==null)clearTimeout(tapTimer.current);},[]);
 
  const nowKey=dayKey(now);
  const nowMinutes=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
@@ -114,7 +121,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    return {...resizePreview(g.task.id,g.day,g.minute,g.duration,g.mode,delta),
      ...(g.task.occurrence_date?{occurrenceDate:g.task.occurrence_date}:{})};
  }
- function press(e:ReactPointerEvent<HTMLButtonElement>,task:Task,mode:GestureMode){
+ function press(e:ReactPointerEvent<HTMLDivElement>,task:Task,mode:GestureMode){
    if(busy.current||e.button!==0||!task.scheduled_at)return;
    e.stopPropagation();
    e.preventDefault();
@@ -144,7 +151,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      },LONG_PRESS_MS);
    }
  }
- function move(e:ReactPointerEvent<HTMLButtonElement>){
+ function move(e:ReactPointerEvent<HTMLDivElement>){
    const g=gesture.current;
    if(!g||g.pointerId!==e.pointerId)return;
    e.stopPropagation();
@@ -169,7 +176,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    showPreview(next);
    autoScroll(e.clientX,e.clientY);
  }
- async function release(e:ReactPointerEvent<HTMLButtonElement>){
+ async function release(e:ReactPointerEvent<HTMLDivElement>){
    const g=gesture.current;
    if(!g||g.pointerId!==e.pointerId)return;
    e.stopPropagation();e.preventDefault();
@@ -177,7 +184,26 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    gesture.current=null;
    if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
    if(!g.active){
-     edit({kind:'tasks',record:g.task});
+     if(e.pointerType==='touch')touchClickUntil.current=Date.now()+500;
+     if(e.pointerType==='touch'&&g.mode==='move'){
+       const key=g.task.id+'@'+(g.task.occurrence_date||'');
+       const at=Date.now();
+       if(lastTap.current?.key===key&&at-lastTap.current.at<350){
+         if(tapTimer.current)clearTimeout(tapTimer.current);
+         tapTimer.current=null;lastTap.current=null;
+         // The task disappears from its original slot after the move.
+         // Suppress the synthetic click on that now-empty calendar cell.
+         suppressGridUntil.current=Date.now()+1000;
+         void onTomorrow(g.task).catch(()=>{});
+       }else{
+         lastTap.current={key,at};
+         if(tapTimer.current)clearTimeout(tapTimer.current);
+         tapTimer.current=setTimeout(()=>{
+           if(lastTap.current?.key===key)edit({kind:'tasks',record:g.task});
+           lastTap.current=null;tapTimer.current=null;
+         },355);
+       }
+     }else edit({kind:'tasks',record:g.task});
      return;
    }
    // Commit exactly the preview the user saw. Re-projecting after an edge
@@ -202,7 +228,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      busy.current=false;setSaving(false);showPreview(null);
    }
  }
- function cancel(e:ReactPointerEvent<HTMLButtonElement>){
+ function cancel(e:ReactPointerEvent<HTMLDivElement>){
    if(gesture.current?.pointerId!==e.pointerId)return;
    clearTimer();gesture.current=null;showPreview(null);
  }
@@ -220,7 +246,17 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
       return <div key={key} data-calendar-day={key}
         className={'day-track '+(day===key?'active ':'')+(rangeOn?'in-range':'')+(pending?' gesture-target':'')}
         style={{height:(END-START)*HOUR_HEIGHT,'--hour-height':HOUR_HEIGHT+'px'} as CSSProperties}
+        onDragOver={e=>{if(e.dataTransfer.types.includes('application/x-pm-task'))e.preventDefault();}}
+        onDrop={e=>{
+          const raw=e.dataTransfer.getData('application/x-pm-task');
+          if(!/^\d+$/.test(raw))return;
+          e.preventDefault();e.stopPropagation();
+          const rect=e.currentTarget.getBoundingClientRect();
+          const minutes=Math.max(0,Math.min(1410,Math.floor((e.clientY-rect.top)/HOUR_HEIGHT*4)*15));
+          void onDropTask(Number(raw),toScheduledAt(key,minutes)).catch(()=>{});
+        }}
         onClick={e=>{
+          if(Date.now()<suppressGridUntil.current)return;
           if(e.target!==e.currentTarget)return;
           const rect=e.currentTarget.getBoundingClientRect();
           const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));
@@ -234,7 +270,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           const task=b.kind==='tasks';
           const location=placement.placements.get(b.kind+'-'+b.id+(task?'@'+(b.record.occurrence_date||''):''));
           const gestureTask=task&&preview?.taskId===b.id&&preview?.occurrenceDate===b.record.occurrence_date;
-          return <button key={b.kind+b.id+(task?b.record.occurrence_date||'':'')}
+          return <div role="button" tabIndex={0} key={b.kind+b.id+(task?b.record.occurrence_date||'':'')}
             className={'cal-item '+(task?'task-block':'event-block')+(task&&b.minutes<60?' compact-task':'')+(gestureTask?' gesture-source':'')}
             style={{
               top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35',
@@ -256,19 +292,27 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             onLostPointerCapture={task?e=>{if(gesture.current?.pointerId===e.pointerId)cancel(e)}:undefined}
             onClick={e=>{
               e.stopPropagation();
-              if(task){if(e.detail===0)edit({kind:'tasks',record:b.record as Task});}
+              if(task){if(e.detail===0&&Date.now()>touchClickUntil.current)edit({kind:'tasks',record:b.record as Task});}
               else edit({kind:'events',record:b.record});
             }}
+            onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();edit({kind:b.kind,record:b.record});}}}
             title={(task&&b.record.recurrence?'↻ ':'')+b.title+' · '+b.start.slice(11,16)}
             aria-label={b.title+' · '+b.start.slice(11,16)}>
             <strong>{task&&b.record.recurrence?'↻ ':''}{b.title}</strong>
             {!(task&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
             {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
+            {task&&<button type="button" className="cal-tomorrow" title="Перенести на завтра"
+              aria-label={'Перенести на завтра: '+b.title}
+              onPointerDown={e=>e.stopPropagation()}
+              onPointerUp={e=>e.stopPropagation()}
+              onClick={e=>{e.stopPropagation();void onTomorrow(b.record as Task).catch(()=>{});}}>
+              <ArrowRight size={12}/>
+            </button>}
             {task&&<>
               <span className="calendar-resize-edge top-edge" data-resize="start" aria-hidden="true"/>
               <span className="calendar-resize-edge bottom-edge" data-resize="end" aria-hidden="true"/>
             </>}
-          </button>;
+          </div>;
         })}
         {pending&&preview&&<div className={'task-preview '+(preview.duration<60?'compact-task':'')}
           style={{

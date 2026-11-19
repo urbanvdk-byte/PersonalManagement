@@ -45,7 +45,7 @@ function initialDemo():Store{
       {id:3,title:'Разобрать покупки на неделю',area_id:3,project_id:null,goal_id:null,parent_id:null,notes:'Пример повседневного дела',priority:3,important:0,urgent:1,status:'inbox',scheduled_at:null,due_at:slot(addDays(now,2),17),duration_minutes:30,recurrence:'',recurrence_until:null,color:'#ff963b',created_at,updated_at:created_at},
       {id:4,title:'Идея для будущего проекта',area_id:1,project_id:null,goal_id:null,parent_id:null,notes:'Сохранено на потом',priority:4,important:0,urgent:0,status:'someday',scheduled_at:null,due_at:null,duration_minutes:30,recurrence:'',recurrence_until:null,color:'#9463d6',created_at,updated_at:created_at}
     ],
-    occurrences:[],
+    occurrences:[],checklist:[],milestones:[],activity:[],
     events:[
       {id:1,title:'Тестовая встреча',area_id:1,project_id:1,notes:'Вымышленное событие',starts_at:slot(now,14),ends_at:slot(now,15),color:'#f0b23c',created_at},
       {id:2,title:'Личное время',area_id:3,project_id:null,notes:'Демонстрационный блок',starts_at:slot(addDays(now,2),19),ends_at:slot(addDays(now,2),20),color:'#3c9ee5',created_at}
@@ -59,6 +59,9 @@ function loadDemo():Store{
       const data=JSON.parse(raw) as Store;
       if(['areas','projects','goals','tasks','events'].every(k=>Array.isArray(data[k as Kind]))){
         if(!Array.isArray(data.occurrences))data.occurrences=[];
+        if(!Array.isArray(data.checklist))data.checklist=[];
+        if(!Array.isArray(data.milestones))data.milestones=[];
+        if(!Array.isArray(data.activity))data.activity=[];
         for(const project of data.projects){
           if(!Array.isArray(project.area_ids))project.area_ids=project.area_id?[project.area_id]:[];
         }
@@ -127,6 +130,11 @@ async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
     const newId=Math.max(0,...list.map(x=>Number(x.id)||0))+1;
     list.push({...defaults[kind],...values,id:newId,created_at:stamp,...(kind==='tasks'?{updated_at:stamp}:{})});
   }
+  if(kind==='projects')writeActivity(data,id||Number((data.projects as unknown as Row[]).at(-1)?.id),"Проект: "+String(values.title||'обновлён'));
+  if(kind==='tasks'||kind==='goals'||kind==='events'){
+    const target=id?(list.find(x=>x.id===id)?.project_id):values.project_id;
+    writeActivity(data,Number(target)||null,(id?'Обновлено: ':'Создано: ')+String(values.title||list.find(x=>x.id===id)?.title||''));
+  }
   storeDemo(data);
 }
 async function demoRemove(kind:Kind,id:number):Promise<void>{
@@ -145,12 +153,15 @@ async function demoRemove(kind:Kind,id:number):Promise<void>{
     data.events.forEach(x=>{if(x.area_id===id)x.area_id=null});
   }
   if(kind==='projects'){
+    data.milestones=(data.milestones||[]).filter(m=>m.project_id!==id);
+    data.activity=(data.activity||[]).filter(a=>a.project_id!==id);
     data.tasks.forEach(x=>{if(x.project_id===id)x.project_id=null});
     data.goals.forEach(x=>{if(x.project_id===id)x.project_id=null});
     data.events.forEach(x=>{if(x.project_id===id)x.project_id=null});
   }
   if(kind==='goals')data.tasks.forEach(x=>{if(x.goal_id===id)x.goal_id=null});
   if(kind==='tasks'){
+    data.checklist=(data.checklist||[]).filter(item=>item.task_id!==id);
     data.tasks.forEach(x=>{if(x.parent_id===id)x.parent_id=null});
     data.occurrences=(data.occurrences||[]).filter(x=>x.task_id!==id);
   }
@@ -228,6 +239,73 @@ async function splitSeries(taskId:number,day:string,changes:Row):Promise<void>{
   storeDemo(data);
 }
 
+
+type ExtraKind='checklist'|'milestones';
+function writeActivity(data:Store,projectId:number|null,message:string){
+ if(!projectId)return;
+ const records=data.activity||[];
+ const id=Math.max(0,...records.map(x=>x.id))+1;
+ records.unshift({id,project_id:projectId,message,happened_at:new Date().toISOString()});
+ data.activity=records.slice(0,500);
+}
+async function createExtra(kind:ExtraKind,parentId:number,details:Row):Promise<void>{
+ if(!isDemo){
+   await request('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind,
+     {method:'POST',body:JSON.stringify(details)});
+   return;
+ }
+ const title=String(details.title||'').trim();
+ if(!title||title.length>250)throw Error('Введите название');
+ const data=loadDemo();
+ if(kind==='checklist'&&!data.tasks.some(task=>task.id===parentId))throw Error('Задача не найдена');
+ if(kind==='milestones'&&!data.projects.some(project=>project.id===parentId))throw Error('Проект не найден');
+ const list=(kind==='checklist'?data.checklist:data.milestones)||[];
+ const id=Math.max(0,...list.map(item=>item.id))+1;
+ const position=1+list.filter(item=>kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId).length;
+ if(kind==='checklist'){
+   (data.checklist||=[]).push({id,task_id:parentId,title,done:0,position});
+   writeActivity(data,data.tasks.find(task=>task.id===parentId)?.project_id||null,'Чек-лист: '+title);
+ }else{
+   const date=details.due_date;
+   if(date!=null&&!/^\d{4}-\d{2}-\d{2}$/.test(String(date)))throw Error('Неверная дата этапа');
+   (data.milestones||=[]).push({id,project_id:parentId,title,done:0,position,due_date:date?String(date):null});
+   writeActivity(data,parentId,'Новый этап: '+title);
+ }
+ storeDemo(data);
+}
+async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row):Promise<void>{
+ if(!isDemo){
+   await request('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,
+      {method:'PATCH',body:JSON.stringify(details)});
+   return;
+ }
+ const data=loadDemo();
+ const list=kind==='checklist'?data.checklist:data.milestones;
+ const row=list?.find(item=>item.id===id&&(kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId));
+ if(!row)throw Error('Элемент не найден');
+ if(details.done!==undefined&&![0,1,false,true].includes(details.done as number|boolean))throw Error('Неверный статус');
+ if(details.title!==undefined&&(!String(details.title).trim()||String(details.title).length>250))throw Error('Неверное название');
+ if(details.due_date!==undefined&&details.due_date!==null&&!/^\d{4}-\d{2}-\d{2}$/.test(String(details.due_date)))throw Error('Неверная дата');
+ Object.assign(row,details);
+ const projectId=kind==='milestones'?parentId:data.tasks.find(task=>task.id===parentId)?.project_id||null;
+ writeActivity(data,projectId,(details.done===1?'Выполнено: ':'Изменено: ')+row.title);
+ storeDemo(data);
+}
+async function removeExtra(kind:ExtraKind,parentId:number,id:number):Promise<void>{
+ if(!isDemo){
+   await request<void>('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,{method:'DELETE'});
+   return;
+ }
+ const data=loadDemo();
+ const list=kind==='checklist'?data.checklist:data.milestones;
+ const row=list?.find(item=>item.id===id&&(kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId));
+ if(!row)throw Error('Элемент не найден');
+ if(kind==='checklist')data.checklist=(data.checklist||[]).filter(item=>item.id!==id);
+ else data.milestones=(data.milestones||[]).filter(item=>item.id!==id);
+ writeActivity(data,kind==='milestones'?parentId:data.tasks.find(task=>task.id===parentId)?.project_id||null,'Удалено: '+row.title);
+ storeDemo(data);
+}
+
 export const api={
   load:()=>isDemo?Promise.resolve(loadDemo()):request<Store>('/api/bootstrap'),
   save:(kind:Kind,data:Row,id?:number)=>isDemo?demoSave(kind,data,id):request('/api/'+kind+(id?'/'+id:''),{method:id?'PATCH':'POST',body:JSON.stringify(data)}),
@@ -236,5 +314,11 @@ export const api={
   resetDemo,
   saveOccurrence,
   resetOccurrence,
-  splitSeries
+  splitSeries,
+  addChecklist:(taskId:number,title:string)=>createExtra('checklist',taskId,{title}),
+  updateChecklist:(taskId:number,id:number,changes:Row)=>updateExtra('checklist',taskId,id,changes),
+  deleteChecklist:(taskId:number,id:number)=>removeExtra('checklist',taskId,id),
+  addMilestone:(projectId:number,title:string,due_date?:string|null)=>createExtra('milestones',projectId,{title,due_date:due_date||null}),
+  updateMilestone:(projectId:number,id:number,changes:Row)=>updateExtra('milestones',projectId,id,changes),
+  deleteMilestone:(projectId:number,id:number)=>removeExtra('milestones',projectId,id)
 };
