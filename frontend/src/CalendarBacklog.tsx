@@ -16,16 +16,21 @@ export default function CalendarBacklog({tasks,onSchedule,onOpen}:{
  const preview=useRef<{day:string;when:string}|null>(null);
  const clear=()=>{if(timer.current){clearTimeout(timer.current);timer.current=null;}};
  function targetAt(x:number,y:number){
-   const node=document.elementFromPoint(x,y);
-   const track=node?.closest<HTMLElement>('[data-calendar-day]');
-   const scroller=track?.closest<HTMLElement>('.calendar-scroll');
-   if(!track||!scroller)return null;
-   const rect=track.getBoundingClientRect();
-   const scroll=scroller.getBoundingClientRect();
-   if(x<rect.left||x>rect.right||y<scroll.top+40||y>scroll.bottom)return null;
-   const minute=Math.max(0,Math.min(1440-30,Math.floor((y-rect.top)/HOUR_HEIGHT*4)*15));
-   const day=track.dataset.calendarDay!;
-   return {day,when:toScheduledAt(day,minute)};
+   // Pointer capture keeps events on the backlog row. Hit testing by
+   // rectangle also works when another timed card covers the day track.
+   const tracks=document.querySelectorAll<HTMLElement>('.calendar-scroll [data-calendar-day]');
+   for(const track of tracks){
+     const scroller=track.closest<HTMLElement>('.calendar-scroll');
+     if(!scroller)continue;
+     const rect=track.getBoundingClientRect();
+     const scroll=scroller.getBoundingClientRect();
+     if(x<Math.max(rect.left,scroll.left)||x>Math.min(rect.right,scroll.right)||
+        y<scroll.top+40||y>scroll.bottom)return null;
+     const minute=Math.max(0,Math.min(1440-30,Math.floor((y-rect.top)/HOUR_HEIGHT*4)*15));
+     const day=track.dataset.calendarDay!;
+     return {day,when:toScheduledAt(day,minute)};
+   }
+   return null;
  }
  function start(e:ReactPointerEvent<HTMLDivElement>,task:Task){
    if(e.button!==0)return;

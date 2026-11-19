@@ -86,7 +86,7 @@ test('double touch on mobile moves just one appointment to tomorrow',async({brow
  const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
  const page=await context.newPage();
  await page.goto('/');
- const task=page.locator('.cal-item.task-block').first();
+ const task=page.locator('.cal-item.task-block',{hasText:'Обсудить план проекта'}).first();
  await task.scrollIntoViewIfNeeded();
  await task.evaluate(node=>{
    const scroller=node.closest('.calendar-scroll');
