@@ -163,7 +163,7 @@ function TaskList({tasks,store,edit,toggle,message='Здесь пока нет �
  if(!tasks.length)return <div className="empty">{message}</div>;
  return <div className="task-list">{tasks.map(t=><div className="task-row" key={t.id}>
    <button className={'task-check '+(t.status==='done'?'done':'')} onClick={()=>toggle(t)} aria-label="Отметить выполненным">{t.status==='done'&&<Check size={13}/>}</button>
-   <button className="task-main" onClick={()=>edit({kind:'tasks',record:t})}><strong className={t.status==='done'?'strike':''}>{t.title}</strong><small>{groupName(t.project_id,store.projects)}{t.due_at?' · срок '+fmtDate(t.due_at):''}{t.scheduled_at?' · '+fmtTime(t.scheduled_at):''}</small></button>
+   <button className="task-main" onClick={()=>edit({kind:'tasks',record:t})}><strong className={t.status==='done'?'strike':''}>{t.title}</strong><small>{groupName(t.project_id,store.projects)}{t.due_at?' · срок '+fmtDate(t.due_at):''}{t.scheduled_at?' · '+fmtDate(t.scheduled_at)+', '+fmtTime(t.scheduled_at):' · без времени'}</small></button>
    <span className={'priority p'+t.priority}>P{t.priority}</span>
   </div>)}</div>
 }
@@ -307,6 +307,7 @@ export default function App(){
   setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&page==='calendar'});
  };
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
+ const selectedProject=data.projects.find(p=>p.id===selectedProjectId);
  const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
  const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay);
  const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
@@ -370,16 +371,51 @@ export default function App(){
      <p className="tip">Нажмите на свободную ячейку календаря, чтобы назначить время задаче.</p>
     </aside></div>}
     {page==='inbox'&&<section className="content narrow"><div className="content-header"><div><h2>Входящие</h2><p>Собирайте здесь всё новое, затем распределяйте по проектам и времени.</p></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><TaskList tasks={filtered.filter(t=>t.status==='inbox')} store={data} edit={setEditing} toggle={toggle} message="Входящие пусты"/></section>}
-    {page==='tasks'&&<section className="content narrow"><div className="content-header"><div><h2>Все задачи</h2><p>Общий список личных дел, работы и проектов.</p></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><label className="search"><Search size={18}/><input placeholder="Поиск по названию" value={search} onChange={e=>setSearch(e.target.value)}/></label><h3 className="section-label">Активные</h3><TaskList tasks={filtered.filter(isOpen).sort((a,b)=>a.priority-b.priority)} store={data} edit={setEditing} toggle={toggle}/><h3 className="section-label">Завершённые</h3><TaskList tasks={filtered.filter(t=>!isOpen(t))} store={data} edit={setEditing} toggle={toggle}/></section>}
+    {page==='tasks'&&<section className="content task-groups-page">
+      <div className="content-header"><div><h2>Все задачи</h2><p>Задачи по матрице Эйзенхауэра. Без времени — остаются здесь, запланированные — также видны в календаре.</p></div>
+        <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить задачу</button>
+      </div>
+      <label className="search"><Search size={18}/><input placeholder="Поиск по названию" aria-label="Поиск задач" value={search} onChange={e=>setSearch(e.target.value)}/></label>
+      <PriorityGroups tasks={filtered} store={data} edit={setEditing} toggle={toggle}
+        add={priority=>open('tasks',{priority})}/>
+    </section>}
     {page==='matrix'&&<section className="content"><div className="content-header"><div><h2>Матрица Эйзенхауэра</h2><p>Распределение задач по важности и срочности.</p></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><div className="matrix">{[
       ['Важно и срочно','Сделать в первую очередь'],['Важно, не срочно','Запланировать время'],['Срочно, не важно','Делегировать или упростить'],['Не важно, не срочно','Отложить или исключить']
      ].map(([name,hint],i)=><div className={'matrix-cell m'+(i+1)} key={name}><header><span className={'priority p'+(i+1)}>P{i+1}</span><div><h3>{name}</h3><small>{hint}</small></div></header>{active.filter(t=>t.priority===i+1).map(t=><button key={t.id} className="matrix-task" onClick={()=>setEditing({kind:'tasks',record:t})}><strong>{t.title}</strong><small>{groupName(t.project_id,data.projects)}</small></button>)}{!active.some(t=>t.priority===i+1)&&<p className="tip">Задач нет</p>}<button className="matrix-add" onClick={()=>open('tasks',{priority:i+1})}><Plus size={15}/> Добавить</button></div>)}</div></section>}
-    {page==='projects'&&<section className="content"><div className="content-header"><div><h2>Проекты</h2><p>Сроки, задачи и измеримые результаты каждого проекта.</p></div><button className="primary-btn" onClick={()=>open('projects')}><Plus size={16}/> Проект</button></div><div className="cards">{data.projects.map(p=>{
-      const tasks=data.tasks.filter(t=>t.project_id===p.id);const done=tasks.filter(t=>t.status==='done').length;
-      return <button className="entity-card" key={p.id} onClick={()=>setEditing({kind:'projects',record:p})}><header><FolderKanban size={21}/><span className="pill">{projectStatuses[p.status]||p.status}</span></header><h3>{p.title}</h3><p>{p.description||groupName(p.area_id,data.areas)}</p><div className="card-meta"><span>{done}/{tasks.length} задач</span><span>{p.due_date?fmtDate(p.due_date):'Без срока'}</span></div><div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div><small>{data.goals.filter(g=>g.project_id===p.id).length} связанных целей</small></button>;
-     })}{!data.projects.length&&<div className="empty-card">Создайте первый проект, а затем свяжите с ним задачи и цели.</div>}</div><h3 className="section-label">Задачи по проектам</h3><TaskList tasks={active.filter(t=>t.project_id!==null)} store={data} edit={setEditing} toggle={toggle}/></section>}
+    {page==='projects'&&(selectedProject?
+      <ProjectWorkspace project={selectedProject} store={data}
+        onBack={()=>setSelectedProjectId(null)}
+        onEdit={()=>setEditing({kind:'projects',record:selectedProject})}
+        onCreate={kind=>open(kind,{project_id:selectedProject.id,
+          ...(kind==='events'?{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'}:{})})}
+        onOpenTask={record=>setEditing({kind:'tasks',record})}
+        onToggle={toggle}
+        onOpenGoal={record=>setEditing({kind:'goals',record})}
+        onOpenEvent={record=>setEditing({kind:'events',record})}/> :
+      <section className="content"><div className="content-header"><div><h2>Проекты</h2><p>Откройте проект, чтобы увидеть все связанные задачи, цели, события и направления.</p></div><button className="primary-btn" onClick={()=>open('projects')}><Plus size={16}/> Проект</button></div>
+        <div className="cards">{data.projects.map(p=>{
+          const tasks=data.tasks.filter(t=>t.project_id===p.id);
+          const done=tasks.filter(t=>t.status==='done').length;
+          const linkedIds=p.area_ids?.length?p.area_ids:p.area_id?[p.area_id]:[];
+          return <button className="entity-card project-entry" key={p.id}
+            onClick={()=>setSelectedProjectId(p.id)}
+            aria-label={'Открыть проект '+p.title}>
+            <header><FolderKanban size={21}/><span className="pill">{projectStatuses[p.status]||p.status}</span></header>
+            <h3>{p.title}</h3><p>{p.description||'Проект без описания'}</p>
+            <div className="project-entry-areas">{linkedIds.map(id=>{
+              const area=data.areas.find(a=>a.id===id);
+              return area?<span key={id}>{areaEmoji(area.emoji)} {area.title}</span>:null;
+            })}</div>
+            <div className="card-meta"><span>{done}/{tasks.length} задач</span><span>{p.due_date?fmtDate(p.due_date):'Без срока'}</span></div>
+            <div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div>
+            <small>{data.goals.filter(g=>g.project_id===p.id).length} целей · {data.events.filter(e=>e.project_id===p.id).length} событий</small>
+          </button>;
+        })}
+        {!data.projects.length&&<div className="empty-card">Создайте первый проект, затем привязывайте задачи, цели, события и направления.</div>}
+        </div>
+      </section>)}
     {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Измеримые цели</h2><p>Целевые значения, фактический прогресс, период достижения.</p></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} className="entity-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{percent(g)}%</span></header><h3>{g.title}</h3><p>{groupName(g.project_id,data.projects)}</p><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div><div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую измеримую цель: показатель, период и ожидаемый результат.</div>}</div></section>}
-    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji">{areaEmoji(a.emoji)}</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
+    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji">{areaEmoji(a.emoji)}</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_ids?.includes(a.id)||p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
     </>}
    </main>
   </div>

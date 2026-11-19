@@ -84,8 +84,12 @@ def test_task_schedule_required_and_quarter_hour_duration(tmp_path, monkeypatch)
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "task-rules.db"))
     with TestClient(app) as client:
-        assert client.post("/api/tasks", headers=auth(), json={"title": "Без времени"}).status_code == 422
-        assert client.post("/api/tasks", headers=auth(), json={"title": "Без времени", "scheduled_at": None}).status_code == 422
+        without_time = client.post("/api/tasks", headers=auth(), json={"title": "Без времени", "status": "inbox"})
+        assert without_time.status_code == 201 and without_time.json()["scheduled_at"] is None
+        assert client.post("/api/tasks", headers=auth(), json={"title": "Без времени", "scheduled_at": None}).status_code == 201
+        assert client.post("/api/tasks", headers=auth(), json={"title": "Повтор без времени", "recurrence": "daily"}).status_code == 422
+        assert client.patch(f'/api/tasks/{without_time.json()["id"]}', headers=auth(), json={"recurrence": "weekly"}).status_code == 422
+        assert client.patch(f'/api/tasks/{without_time.json()["id"]}', headers=auth(), json={"scheduled_at": "2026-11-20T08:00", "recurrence": "weekly"}).status_code == 200
         for minutes in (15, 29, 31, 44, 61, 1441):
             response = client.post("/api/tasks", headers=auth(), json={
                 "title": "Недопустимая длительность", "scheduled_at": "2026-11-20T10:00", "duration_minutes": minutes
@@ -99,7 +103,7 @@ def test_task_schedule_required_and_quarter_hour_duration(tmp_path, monkeypatch)
         task = client.post("/api/tasks", headers=auth(), json={
             "title": "Запланированная", "scheduled_at": "2026-11-20T10:00", "duration_minutes": 30
         }).json()
-        assert client.patch(f'/api/tasks/{task["id"]}', headers=auth(), json={"scheduled_at": None}).status_code == 422
+        assert client.patch(f'/api/tasks/{task["id"]}', headers=auth(), json={"scheduled_at": None}).status_code == 200
         assert client.patch(f'/api/tasks/{task["id"]}', headers=auth(), json={"duration_minutes": 45}).json()["duration_minutes"] == 45
 
 
@@ -173,3 +177,56 @@ def test_recurrence_migration_preserves_legacy_task(tmp_path,monkeypatch):
     with TestClient(app) as client:
         t=client.get("/api/bootstrap",headers=auth()).json()["tasks"][0]
         assert t["title"]=="Старая" and t["recurrence_until"] is None
+
+
+def test_multiple_project_directions_and_related_entities(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"projects.db"))
+    with TestClient(app) as client:
+        a=client.post("/api/areas",headers=auth(),json={"title":"Работа"}).json()["id"]
+        b=client.post("/api/areas",headers=auth(),json={"title":"Здоровье"}).json()["id"]
+        proj=client.post("/api/projects",headers=auth(),json={"title":"Семейный проект","area_ids":[a,b]}).json()
+        assert proj["area_ids"]==[a,b]
+        assert proj["area_id"]==a
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Без расписания","project_id":proj["id"]}).json()
+        goal=client.post("/api/goals",headers=auth(),json={"title":"Измеримый результат","project_id":proj["id"]}).json()
+        event=client.post("/api/events",headers=auth(),json={"title":"Встреча","project_id":proj["id"],"starts_at":"2026-12-01T10:00","ends_at":"2026-12-01T11:00"}).json()
+        assert task["scheduled_at"] is None
+        assert client.get("/api/bootstrap",headers=auth()).json()["projects"][0]["area_ids"]==[a,b]
+        assert client.get("/api/export",headers=auth()).json()["data"]["projects"][0]["area_ids"]==[a,b]
+        changed=client.patch(f'/api/projects/{proj["id"]}',headers=auth(),json={"area_ids":[b]}).json()
+        assert changed["area_ids"]==[b] and changed["area_id"]==b
+        assert client.patch(f'/api/projects/{proj["id"]}',headers=auth(),json={"area_ids":[]}).json()["area_ids"]==[]
+        assert client.post("/api/projects",headers=auth(),json={"title":"Дубли","area_ids":[a,a]}).status_code==422
+        assert client.post("/api/projects",headers=auth(),json={"title":"Несуществующее","area_ids":[999]}).status_code==409
+        assert client.delete(f'/api/projects/{proj["id"]}',headers=auth()).status_code==204
+        result=client.get("/api/bootstrap",headers=auth()).json()
+        assert next(t for t in result["tasks"] if t["id"]==task["id"])["project_id"] is None
+        assert next(t for t in result["goals"] if t["id"]==goal["id"])["project_id"] is None
+        assert next(t for t in result["events"] if t["id"]==event["id"])["project_id"] is None
+
+def test_legacy_project_area_migration_preserves_links(tmp_path,monkeypatch):
+    import sqlite3
+    from app import SCHEMA
+    path=tmp_path/"old-projects.db"
+    original=SCHEMA.replace("""CREATE TABLE IF NOT EXISTS project_areas (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  area_id INTEGER NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
+  PRIMARY KEY (project_id,area_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_areas_area ON project_areas(area_id);
+""","")
+    with sqlite3.connect(path) as db:
+        db.executescript(original)
+        area=db.execute("INSERT INTO areas(title) VALUES (?)",("Старая сфера",)).lastrowid
+        db.execute("INSERT INTO projects(title,area_id) VALUES (?,?)",("Старый проект",area))
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(path))
+    with TestClient(app) as client:
+        record=client.get("/api/bootstrap",headers=auth()).json()["projects"][0]
+        assert record["title"]=="Старый проект"
+        assert record["area_ids"]==[area]
+        updated=client.patch(f'/api/projects/{record["id"]}',headers=auth(),json={"area_ids":[]}).json()
+        assert updated["area_ids"]==[] and updated["area_id"] is None
+    with TestClient(app) as client:
+        assert client.get("/api/bootstrap",headers=auth()).json()["projects"][0]["area_ids"]==[]

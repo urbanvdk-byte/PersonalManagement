@@ -208,7 +208,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      const key=dayKey(d);
      return <button className={'day-head '+(day===key?'selected ':'')+(rangeOn?'in-range':'')} key={key} onClick={()=>setDay(key)}><small>{d.toLocaleDateString('ru-RU',{weekday:'short'}).toUpperCase()}</small><strong className={key===nowKey?'today':''}>{d.getDate()}</strong></button>;
    })}</div>
-   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}>{store.tasks.filter(t=>isOpen(t.status)&&!t.scheduled_at&&t.due_at?.startsWith(dayKey(d))).slice(0,3).map(t=><button key={t.id} onClick={()=>edit({kind:'tasks',record:t})}>{t.title}</button>)}</div>)}</div>
+   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}/>)}</div>
    <div className="cal-row cal-body" style={columns}>
     <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
     {dayLayouts.map(({key,tasks,events,placement})=>{
