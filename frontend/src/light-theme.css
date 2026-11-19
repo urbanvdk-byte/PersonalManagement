@@ -321,3 +321,38 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
  .schedule-floating-add{width:52px;height:52px;bottom:20px}
 }
 @media(prefers-reduced-motion:reduce){.schedule-date{transition:none}}
+
+/* UI simplification: priority color outlines and focused mobile layout */
+.sidebar{padding-top:26px!important}
+.sidebar .nav-caption{margin-top:4px!important;margin-bottom:16px!important}
+.topbar{min-height:76px!important;padding-top:17px!important;padding-bottom:17px!important}
+.top-title h1{margin:0!important;font-size:26px!important}
+.overview-strip{padding-top:13px!important}
+.task-priority-matrix .collapsible-priority.m1{border:1px solid #dc655e!important}
+.task-priority-matrix .collapsible-priority.m2{border:1px solid #e4aa3a!important}
+.task-priority-matrix .collapsible-priority.m3{border:1px solid #3e8fcc!important}
+.task-priority-matrix .collapsible-priority.m4{border:1px solid #9ca7af!important}
+.schedule-toolbar{min-height:40px;gap:12px}
+.schedule-toolbar .schedule-current-date{
+ margin:0!important;font-size:15px!important;line-height:1.4;
+ color:#494a45!important;font-weight:680;text-transform:capitalize;
+}
+.schedule-summary>div{justify-content:center;min-height:75px}
+.schedule-summary>div>span{font-size:12px}
+@media(max-width:760px){
+ .overview-strip{display:none!important}
+ .topbar{min-height:0!important;padding:13px 15px!important;gap:8px!important}
+ .top-title h1{font-size:21px!important}
+ .topbar .top-actions{gap:4px!important}
+ .schedule-page{padding-top:13px!important}
+ .schedule-toolbar{min-height:31px;gap:7px}
+ .schedule-toolbar .schedule-current-date{
+  font-size:12px!important;line-height:1.25!important;min-width:0;flex:1
+ }
+ .schedule-toolbar-actions{flex:none;gap:1px!important}
+ .schedule-toolbar .schedule-today{padding:6px 9px!important}
+ .schedule-toolbar .schedule-nav-btn{width:29px!important;height:29px!important}
+ .schedule-week{margin-top:13px!important}
+ .schedule-summary{margin-bottom:17px!important}
+ .schedule-summary>div{min-height:60px;padding:11px 9px!important;gap:5px}
+}
