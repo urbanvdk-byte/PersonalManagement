@@ -96,6 +96,12 @@ test('double touch on mobile moves just one appointment to tomorrow',async({brow
  const rect=await task.boundingBox();
  expect(rect).not.toBeNull();
  const x=rect!.x+Math.min(28,rect!.width/3),y=rect!.y+rect!.height/2;
+ console.log('TOUCH_HIT',JSON.stringify(await page.evaluate(({x,y})=>({
+   x,y,win:{height:innerHeight,width:innerWidth},
+   hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,450),
+   cal:document.querySelector('.calendar-scroll')?.getBoundingClientRect().toJSON(),
+   nav:document.querySelector('.mobile-bottom-nav')?.getBoundingClientRect().toJSON()
+ }),{x,y})));
  const id=await task.evaluate(node=>Number(node.getAttribute('data-layout-column'))); // Touch target sanity check
  expect(id).not.toBeNaN();
  const cdp=await context.newCDPSession(page);

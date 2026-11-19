@@ -18,11 +18,11 @@ test('Daily Schedule shows same tasks as weekly calendar and edits the shared ta
  // The seed task may fall outside the current week; use the public adjacent-day controls.
  for(let n=0;n<21;n++){
    const current=await page.locator('.schedule-toolbar p').innerText();
-   if((await schedule.getByRole('button',{name:t.title}).count())>0)break;
+   if((await schedule.getByRole('button',{name:t.title,exact:true}).count())>0)break;
    await page.getByRole('button',{name:'Следующий день'}).click();
  }
- await expect(schedule.getByRole('button',{name:t.title})).toBeVisible();
- await schedule.getByRole('button',{name:t.title}).click();
+ await expect(schedule.getByRole('button',{name:t.title,exact:true})).toBeVisible();
+ await schedule.getByRole('button',{name:t.title,exact:true}).click();
  await expect(page.getByRole('dialog')).toBeVisible();
  await expect(page.getByRole('dialog').locator('input').first()).toHaveValue(t.title);
 });
