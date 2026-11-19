@@ -130,3 +130,11 @@ npm run dev
 Ежемесячный повтор 31-го числа попадает на последний день февраля, апреля и других коротких месяцев; ежегодный повтор 29 февраля попадает на 28 февраля вне високосных лет.
 
 В SQLite создаётся таблица `task_occurrences` с уникальной парой `task_id + occurrence_date`. Для старых баз `tasks.recurrence_until` добавляется без удаления существующих задач. Экспорт JSON включает и серии, и исключения. В GitHub Pages те же данные сохраняются в текущем localStorage (старые данные не сбрасываются).
+
+## Tasks and project containers (November 2026)
+
+- In **Calendar**, a new task requires a real date/time and is scheduled immediately. In **All tasks**, **Inbox**, and a project, the time can remain empty; such tasks are saved and excluded from every calendar view, even when they have a deadline.
+- A repeating task always needs a dated occurrence to anchor its rule.
+- **All tasks** displays separate collapsible cards for P1–P4 using the Eisenhower layout, plus collapsed **Completed** and optional **Cancelled** history. Search still filters across all groups.
+- Clicking a project opens its container with related tasks, measurable goals, events, progress, and directions. **Edit project** is a separate button.
+- Projects can have zero, one or multiple directions. The server stores membership in `project_areas` while keeping the legacy `projects.area_id` field synchronized for compatibility; on upgrade, old associations are safely copied. GitHub Pages stores `area_ids` on the existing project records without resetting localStorage.

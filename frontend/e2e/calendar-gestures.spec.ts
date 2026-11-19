@@ -4,7 +4,10 @@ async function revealTask(task:Locator){
   await task.scrollIntoViewIfNeeded();
   await task.evaluate(node=>{
     const scroller=node.closest('.calendar-scroll');
-    if(scroller)scroller.scrollTop=Math.max(0,scroller.scrollTop-155);
+    if(!scroller)return;
+    const bounds=node.getBoundingClientRect();
+    const viewport=scroller.getBoundingClientRect();
+    scroller.scrollTop+=bounds.top+bounds.height/2-(viewport.top+viewport.height/2);
   });
   await expect.poll(async()=>{
     return task.evaluate(node=>{

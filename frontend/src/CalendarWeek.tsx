@@ -162,10 +162,12 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    if(distance>3)g.moved=true;
    if(!g.moved)return;
    e.preventDefault();
-   autoScroll(e.clientX,e.clientY);
+   // Calculate from the pre-scroll geometry. Auto-scrolling first can add
+   // an unintended 15-minute jump to a touch drag near the screen edge.
    const next=project(g,e.clientX,e.clientY);
    g.preview=next;
    showPreview(next);
+   autoScroll(e.clientX,e.clientY);
  }
  async function release(e:ReactPointerEvent<HTMLButtonElement>){
    const g=gesture.current;
@@ -178,7 +180,9 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      edit({kind:'tasks',record:g.task});
      return;
    }
-   const result=g.moved?project(g,e.clientX,e.clientY):g.preview;
+   // Commit exactly the preview the user saw. Re-projecting after an edge
+   // scroll may alter the time without any further pointer movement.
+   const result=g.preview;
    if(!g.moved||!isPreviewChanged(g.day,g.minute,g.duration,result)){
      showPreview(null);
      return;
@@ -208,7 +212,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      const key=dayKey(d);
      return <button className={'day-head '+(day===key?'selected ':'')+(rangeOn?'in-range':'')} key={key} onClick={()=>setDay(key)}><small>{d.toLocaleDateString('ru-RU',{weekday:'short'}).toUpperCase()}</small><strong className={key===nowKey?'today':''}>{d.getDate()}</strong></button>;
    })}</div>
-   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}>{store.tasks.filter(t=>isOpen(t.status)&&!t.scheduled_at&&t.due_at?.startsWith(dayKey(d))).slice(0,3).map(t=><button key={t.id} onClick={()=>edit({kind:'tasks',record:t})}>{t.title}</button>)}</div>)}</div>
+   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}/>)}</div>
    <div className="cal-row cal-body" style={columns}>
     <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
     {dayLayouts.map(({key,tasks,events,placement})=>{

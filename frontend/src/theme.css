@@ -804,3 +804,76 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .drawer-form select[aria-label="Область изменения повторений"]:focus{
  border-color:#ff963b;
 }
+
+/* Task overview: compact collapsible Eisenhower groups. */
+.task-groups-page .search{margin-bottom:21px}
+.priority-groups{display:flex;flex-direction:column;gap:18px}
+.task-priority-matrix{align-items:start}
+.collapsible-priority{min-height:0;padding:0;overflow:hidden}
+.collapsible-priority>.priority-summary{padding:20px}
+.priority-summary{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  cursor:pointer;
+  list-style:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.priority-summary::-webkit-details-marker{display:none}
+.priority-summary .priority-summary-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.priority-summary-text strong{font-size:14px;color:#173c78}
+.priority-summary-text small{font-size:11px;color:#899cb5;line-height:1.4}
+.priority-count{font-variant-numeric:tabular-nums;background:#eff4fb;border-radius:20px;padding:5px 10px;font-size:12px;font-weight:800;color:#436393}
+.priority-chevron{color:#7a95b1;transition:transform .2s}
+details[open]>.priority-summary .priority-chevron{transform:rotate(90deg)}
+.priority-content{padding:0 18px 15px;border-top:1px solid #e9eef5}
+.priority-content .task-row{padding:11px 3px}
+.completed-group{border:1px solid #dfebed;border-radius:13px;background:white;overflow:hidden}
+.completed-group>.priority-summary{padding:19px 21px;color:#24a475}
+.completed-group .task-list{padding:0 22px 16px;border-top:1px solid #ecf2f5}
+.cancelled-group>.priority-summary{color:#a1aab8}
+.priority-groups summary:focus-visible{outline:3px solid #ff963b;outline-offset:-3px;border-radius:8px}
+
+/* Project overview and a dedicated container with all linked entities. */
+.project-entry{cursor:pointer}
+.project-entry-areas,.project-area-tags{display:flex;flex-wrap:wrap;gap:7px}
+.project-entry-areas span,.project-area-tag{padding:5px 9px;border:1px solid #f3e1c6;background:#fff9ee;border-radius:25px;font-size:11px;color:#73512e}
+.project-area-tag.subdued{color:#9aacba;background:#f5f7fa;border-color:#e9eef5}
+.project-areas-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.project-areas-picker label{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e5ebf5;border-radius:9px;cursor:pointer;font-size:12px}
+.project-areas-picker label:has(input:checked){border-color:#ffb56b;background:#fff5e9}
+.project-areas-picker input{width:auto!important;accent-color:#ef8c24;flex:none}
+.project-areas-picker small{font-size:11px;color:#8396a7;grid-column:1/-1}
+.project-back-row{display:flex;justify-content:space-between;gap:12px;margin-bottom:20px}
+.project-hero{padding:28px;background:white;border:1px solid #e3ebf5;border-radius:16px;box-shadow:0 4px 20px #1f4c8008;display:flex;flex-direction:column;gap:16px}
+.project-hero-title{display:flex;gap:14px;align-items:center;color:#1d59a1}
+.project-hero-title small{color:#eb8219;letter-spacing:1px;font-size:10px;font-weight:800}
+.project-hero-title h2{font-size:25px;color:#14356e;margin:5px 0 0}
+.project-hero p{font-size:13px;line-height:1.6;color:#6e829a;margin:0}
+.project-progress{display:flex;justify-content:space-between;align-items:center;color:#69829e;font-size:12px}
+.project-progress strong{font-size:17px;color:#1b569c}
+.project-dates{display:flex;gap:20px;flex-wrap:wrap;color:#8293a7;font-size:11px}
+.project-sections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:17px;margin-top:20px;align-items:start}
+.project-section{background:white;border:1px solid #e2eaf4;border-radius:13px;padding:19px;min-width:0}
+.project-section:first-child{grid-row:span 2}
+.project-section>header{display:flex;justify-content:space-between;gap:10px;align-items:start;padding-bottom:14px;border-bottom:1px solid #e9eef6}
+.project-section>header h3{margin:0 0 4px;font-size:16px;color:#153b76}
+.project-section>header small{font-size:11px;color:#8ca0b7}
+.project-section .task-row{padding:12px 0}
+.project-linked-row{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left;gap:12px;border:0;border-bottom:1px solid #edf1f7;background:white;padding:13px 2px;color:#2e5c99;font-size:12px}
+.project-linked-row:hover{background:#f9fbff}
+.project-linked-row:last-child{border-bottom:0}
+.project-linked-row>span:first-child{display:flex;flex-direction:column;gap:4px;min-width:0}
+.project-linked-row strong{font-size:12px;color:#183e77}
+.project-linked-row small{font-size:10px;color:#91a2b4}
+@media(max-width:900px){
+ .project-sections{grid-template-columns:1fr}
+ .project-section:first-child{grid-row:auto}
+}
+@media(max-width:650px){
+ .task-priority-matrix{grid-template-columns:1fr}
+ .project-back-row{flex-wrap:wrap}
+ .project-hero{padding:20px}
+ .project-areas-picker{grid-template-columns:1fr}
+}
