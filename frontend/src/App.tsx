@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
 import { api, isDemo } from './api';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
+import DaySchedule from './DaySchedule';
 import CalendarBacklog from './CalendarBacklog';
 import TaskChecklist from './TaskChecklist';
 import {ProjectMilestones,ProjectHistory} from './ProjectExtras';
@@ -15,7 +16,8 @@ import type { Editing, EventItem, Goal, Kind, Page, Project, Store, Task } from 
 
 const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:[],checklist:[],milestones:[],activity:[]};
 const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
- {id:'calendar',title:'Календарь',icon:CalendarDays},{id:'inbox',title:'Входящие',icon:Inbox},
+ {id:'calendar',title:'Календарь',icon:CalendarDays},{id:'schedule',title:'Расписание дня',icon:Clock3},
+ {id:'inbox',title:'Входящие',icon:Inbox},
  {id:'tasks',title:'Все задачи',icon:ListTodo},{id:'matrix',title:'Приоритеты',icon:LayoutGrid},
  {id:'projects',title:'Проекты',icon:FolderKanban},{id:'goals',title:'Цели',icon:Target},
  {id:'areas',title:'Направления',icon:Target}
@@ -339,7 +341,7 @@ export default function App(){
   const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR,recurrence:'',recurrence_until:null}:
     kind==='projects'?{status:'active',area_ids:[]}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:
     kind==='events'?{color:'#f3bb28'}:{emoji:'📁'};
-  setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&page==='calendar'});
+  setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&(page==='calendar'||page==='schedule')});
  };
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
  const selectedProject=data.projects.find(p=>p.id===selectedProjectId);
@@ -387,8 +389,8 @@ export default function App(){
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
-   <header className="topbar"><div className="hero-decoration" aria-hidden="true"></div><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>PERSONAL MANAGEMENT <span className="hero-star">✦</span></small><h1>{title}</h1><p className="hero-subtitle">{page==='calendar'?'Ваша неделя, задачи и важные моменты':'Все важное в одном месте — от идеи до результата'}</p></div></div>
-    <div className="top-actions">{page==='calendar'&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
+   <header className="topbar"><div className="hero-decoration" aria-hidden="true"></div><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>PERSONAL MANAGEMENT <span className="hero-star">✦</span></small><h1>{title}</h1><p className="hero-subtitle">{page==='calendar'?'Ваша неделя и важные моменты':page==='schedule'?'Всё запланированное на выбранный день':'Все важное в одном месте — от идеи до результата'}</p></div></div>
+    <div className="top-actions">{(page==='calendar'||page==='schedule')&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
      <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
@@ -408,6 +410,9 @@ export default function App(){
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
+    {page==='schedule'&&<DaySchedule day={selectedDay} onDayChange={goToDay} store={data}
+       onEdit={setEditing} onToggle={toggle}
+       onAdd={()=>open('tasks',{scheduled_at:selectedDay+'T09:00',status:'planned'})}/>}
     {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}
       onDropTask={async(taskId,when)=>{
         const task=data.tasks.find(t=>t.id===taskId);
@@ -496,6 +501,19 @@ export default function App(){
     </>}
    </main>
   </div>
+  <nav className="mobile-bottom-nav" aria-label="Мобильная навигация">
+     {[
+       {id:'calendar' as Page,title:'Календарь',icon:CalendarDays},
+       {id:'schedule' as Page,title:'День',icon:Clock3},
+       {id:'tasks' as Page,title:'Задачи',icon:ListTodo},
+       {id:'projects' as Page,title:'Проекты',icon:FolderKanban}
+     ].map(link=><button key={link.id} aria-current={page===link.id?'page':undefined}
+       className={page===link.id?'active':''}
+       onClick={()=>{setPage(link.id);setSelectedProjectId(null);setMobile(false);}}>
+       <link.icon size={21}/><span>{link.title}</span>
+     </button>)}
+     <button aria-label="Другие разделы" onClick={()=>setMobile(true)}><MoreHorizontal size={21}/><span>Ещё</span></button>
+  </nav>
   {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+'-'+((editing.record as Task|undefined)?.occurrence_date||'')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove} saveRecurring={saveRecurring} removeRecurring={removeRecurring} reload={load} unschedule={unschedule}/>} 
  </div>
 }
