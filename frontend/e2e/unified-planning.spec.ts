@@ -75,27 +75,11 @@ test('dragging an unscheduled task onto a calendar day assigns a real time',asyn
  const origin=await backlog.boundingBox(),dest=await track.boundingBox(),viewport=await scroller.boundingBox();
  expect(origin).not.toBeNull();expect(dest).not.toBeNull();expect(viewport).not.toBeNull();
  const startX=origin!.x+25,startY=origin!.y+origin!.height/2;
- console.log('START_HIT',JSON.stringify(await page.evaluate(({x,y})=>({
-  hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,300),
-  viewport:{height:innerHeight,width:innerWidth}
- }),{x:startX,y:startY})));
  const endX=dest!.x+Math.min(20,dest!.width/3),endY=viewport!.y+viewport!.height/2;
  await page.mouse.move(startX,startY);
  await page.mouse.down();
  await page.mouse.move(endX,endY,{steps:12});
- console.log('DROP_HIT',JSON.stringify(await page.evaluate(({x,y})=>{
-  const hit=document.elementFromPoint(x,y);
-  const track=document.querySelector('[data-calendar-day]');
-  const pane=document.querySelector('.calendar-scroll');
-  return {hit:hit?.className,closest:hit?.closest('[data-calendar-day]')?.getAttribute('data-calendar-day'),
-  trackRect:track?.getBoundingClientRect().toJSON(),paneRect:pane?.getBoundingClientRect().toJSON()};
- },{x:endX,y:endY})));
  await page.mouse.up();
- console.log('DROP_STATE',JSON.stringify(await page.evaluate(()=>({
-  error:document.querySelector('.backlog-error')?.textContent,
-  ghost:document.querySelector('.backlog-ghost')?.textContent,
-  task:JSON.parse(localStorage.getItem('personalmanagement:pages-demo:v1')||'{}').tasks?.find(t=>t.title==='Задача для перетаскивания')
- }))));
  await expect.poll(async()=>(await state(page)).tasks.find(t=>t.id===task.id)?.scheduled_at).not.toBeNull();
  await expect(backlog).toHaveCount(0);
 });
@@ -117,19 +101,11 @@ test('double touch on mobile moves just one appointment to tomorrow',async({brow
  const cdp=await context.newCDPSession(page);
  const stateBefore=await state(page);
  const initialTask=stateBefore.tasks.find(t=>t.scheduled_at&&t.title.includes('Обсудить план проекта'));
- console.log('TAP_TARGET',JSON.stringify(await page.evaluate(({x,y})=>({
-    element:document.elementFromPoint(x,y)?.outerHTML.slice(0,380),
-    rect:document.querySelector('.cal-item.task-block')?.getBoundingClientRect().toJSON()
- }),{x,y})));
  for(let n=0;n<2;n++){
    await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
    await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
    await page.waitForTimeout(90);
  }
- console.log('TAP_STATE',JSON.stringify(await page.evaluate(()=>({
-    dialog:document.querySelector('.drawer')?.textContent?.slice(0,120),
-    task:JSON.parse(localStorage.getItem('personalmanagement:pages-demo:v1')||'{}').tasks?.find(t=>t.title==='Обсудить план проекта')
- }))));
  await expect.poll(async()=>(await state(page)).tasks.find(t=>t.id===initialTask?.id)?.scheduled_at).not.toBe(initialTask?.scheduled_at);
  await expect(page.locator('.drawer')).toHaveCount(0);
  await context.close();
