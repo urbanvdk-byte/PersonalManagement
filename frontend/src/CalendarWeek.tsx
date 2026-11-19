@@ -118,7 +118,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    return {...resizePreview(g.task.id,g.day,g.minute,g.duration,g.mode,delta),
      ...(g.task.occurrence_date?{occurrenceDate:g.task.occurrence_date}:{})};
  }
- function press(e:ReactPointerEvent<HTMLButtonElement>,task:Task,mode:GestureMode){
+ function press(e:ReactPointerEvent<HTMLDivElement>,task:Task,mode:GestureMode){
    if(busy.current||e.button!==0||!task.scheduled_at)return;
    e.stopPropagation();
    e.preventDefault();
@@ -148,7 +148,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      },LONG_PRESS_MS);
    }
  }
- function move(e:ReactPointerEvent<HTMLButtonElement>){
+ function move(e:ReactPointerEvent<HTMLDivElement>){
    const g=gesture.current;
    if(!g||g.pointerId!==e.pointerId)return;
    e.stopPropagation();
@@ -173,7 +173,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    showPreview(next);
    autoScroll(e.clientX,e.clientY);
  }
- async function release(e:ReactPointerEvent<HTMLButtonElement>){
+ async function release(e:ReactPointerEvent<HTMLDivElement>){
    const g=gesture.current;
    if(!g||g.pointerId!==e.pointerId)return;
    e.stopPropagation();e.preventDefault();
@@ -221,7 +221,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      busy.current=false;setSaving(false);showPreview(null);
    }
  }
- function cancel(e:ReactPointerEvent<HTMLButtonElement>){
+ function cancel(e:ReactPointerEvent<HTMLDivElement>){
    if(gesture.current?.pointerId!==e.pointerId)return;
    clearTimer();gesture.current=null;showPreview(null);
  }
