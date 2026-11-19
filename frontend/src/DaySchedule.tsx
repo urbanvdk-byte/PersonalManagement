@@ -1,8 +1,8 @@
-import {useMemo} from 'react';
+import {useEffect,useMemo,useRef,useState,type CSSProperties} from 'react';
 import {AlarmClock,CalendarDays,Check,ChevronLeft,ChevronRight,Plus,Repeat2,Clock3} from 'lucide-react';
 import {addDays,dayKey,fmtDate,fmtTime,makeDay,weekStart} from './date';
 import {expandTasks} from './recurrence';
-import {areaEmoji} from './taskPalette';
+import {areaEmoji,taskColor} from './taskPalette';
 import type {Editing,EventItem,Store,Task} from './types';
 
 type TimelineTask={kind:'task';start:number;end:number;task:Task};
@@ -19,7 +19,15 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
 }){
  const monday=weekStart(makeDay(day));
  const week=Array.from({length:7},(_,i)=>addDays(monday,i));
- const today=dayKey(new Date());
+ const [now,setNow]=useState(()=>new Date());
+ const markerRef=useRef<HTMLDivElement|null>(null);
+ useEffect(()=>{
+   const id=window.setInterval(()=>setNow(new Date()),30000);
+   return ()=>window.clearInterval(id);
+ },[]);
+ const today=dayKey(now);
+ const showNow=day===today;
+ const currentMinute=now.getHours()*60+now.getMinutes();
  const tasks=useMemo(()=>expandTasks(store.tasks,store.occurrences||[],day,day),[store.tasks,store.occurrences,day]);
  const entries=useMemo(()=>{
    const taskItems:TimelineTask[]=tasks.filter(t=>t.scheduled_at).map(t=>({
@@ -33,6 +41,24 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
  },[tasks,store.events,day]);
  const dayLoad=entries.reduce((total,item)=>total+Math.max(0,item.end-item.start),0);
  const done=tasks.filter(t=>t.status==='done').length;
+ const withinIndex=showNow?entries.findIndex(entry=>currentMinute>=entry.start&&currentMinute<entry.end):-1;
+ const beforeIndex=showNow&&withinIndex===-1?entries.findIndex(entry=>currentMinute<entry.start):-1;
+ // Center the actual current-time marker whenever this screen opens on today.
+ // Do not keep re-centering during the 30-second clock updates or user scrolling.
+ useEffect(()=>{
+   if(!showNow)return;
+   const frame=window.requestAnimationFrame(()=>{
+     markerRef.current?.scrollIntoView({block:'center',inline:'nearest',behavior:'auto'});
+   });
+   return ()=>window.cancelAnimationFrame(frame);
+ },[day,showNow]);
+ const nowMarker=(fraction?:number)=><div ref={markerRef}
+   className={'schedule-now-marker '+(fraction===undefined?'standalone':'within-entry')}
+   style={fraction===undefined?undefined:{top:Math.max(10,Math.min(88,fraction*100))+'%'} as CSSProperties}
+   aria-label={'Текущее время '+asClock(currentMinute)}>
+   <span className="schedule-now-clock">{asClock(currentMinute)}</span>
+   <span className="schedule-now-stroke" aria-hidden="true"/>
+ </div>;
  let cursor=entries[0]?.start??8*60;
  return <section className="schedule-page" aria-label="Расписание дня">
    <div className="schedule-toolbar">
@@ -66,7 +92,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
    <div className="schedule-timeline-head"><h3>План по времени</h3><span><Clock3 size={14}/> {day===today?'Сегодня':'Выбранный день'}</span></div>
    <div className="schedule-timeline">
     {entries.length===0?
-      <div className="schedule-empty"><CalendarDays size={32}/><strong>На этот день пока ничего не назначено</strong><p>Добавьте задачу или вернитесь к календарю для планирования.</p><button onClick={onAdd}><Plus size={17}/> Запланировать</button></div>
+      <>{showNow&&nowMarker()}<div className="schedule-empty"><CalendarDays size={32}/><strong>На этот день пока ничего не назначено</strong><p>Добавьте задачу или вернитесь к календарю для планирования.</p><button onClick={onAdd}><Plus size={17}/> Запланировать</button></div></>
     :entries.map((item,index)=>{
        const gap=Math.max(0,item.start-cursor);cursor=Math.max(cursor,item.end);
        const isTask=item.kind==='task';
@@ -80,10 +106,13 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
        const icon=area?areaEmoji(area.emoji):isTask?'✅':'📅';
        return <div className="schedule-entry-wrap" key={isTask?'task-'+task!.id+'-'+(task!.occurrence_date||day):'event-'+event!.id}>
          {gap>=15&&<div className="schedule-gap"><span>{asClock(item.start-gap)}</span><span>Свободное время · {asDuration(gap)}</span></div>}
+         {showNow&&beforeIndex===index&&nowMarker()}
          <div className="schedule-entry">
+           {showNow&&withinIndex===index&&nowMarker((currentMinute-item.start)/Math.max(1,item.end-item.start))}
            <div className="schedule-time-col"><span>{asClock(item.start)}</span><small>{asClock(item.end)}</small></div>
            <div className="schedule-track-icon"><span>{icon}</span></div>
-           <div className={'schedule-entry-card '+(isTask?'schedule-task':'schedule-event')}>
+           <div className={'schedule-entry-card '+(isTask?'schedule-task':'schedule-event')}
+             style={task?{'--task-outline':taskColor(task.color)} as CSSProperties:undefined}>
              <div className="schedule-card-main">
                <div className="schedule-card-meta">
                  <span>{asClock(item.start)}–{asClock(item.end)} · {asDuration(Math.max(0,item.end-item.start))}</span>
@@ -106,6 +135,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
          </div>
        </div>;
      })}
+    {showNow&&entries.length>0&&withinIndex===-1&&beforeIndex===-1&&nowMarker()}
    </div>
    <button className="schedule-floating-add" onClick={onAdd} aria-label="Добавить задачу на день" title="Добавить задачу на выбранный день"><Plus size={25}/></button>
  </section>;
