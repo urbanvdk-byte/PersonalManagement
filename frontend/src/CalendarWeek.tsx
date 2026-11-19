@@ -54,6 +54,26 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    const hour=new Date().getHours();
    scrollRef.current.scrollTop=Math.max(0,((hour>=7?hour-2:7)-START)*HOUR_HEIGHT);
  },[]);
+ // The desktop calendar starts at the week's first day; on narrow screens
+ // keep the selected (initially today's) date at the center of the viewport.
+ const visibleDaysKey=days.map(dayKey).join('|');
+ useEffect(()=>{
+   if(!window.matchMedia('(max-width: 760px)').matches)return;
+   const frame=window.requestAnimationFrame(()=>{
+     const scroller=scrollRef.current;
+     if(!scroller)return;
+     const keys=visibleDaysKey.split('|');
+     const selected=keys.indexOf(day);
+     const index=selected>=0?selected:keys.indexOf(dayKey(new Date()));
+     const columns=scroller.querySelectorAll<HTMLElement>('.day-head');
+     const target=index>=0?columns[index]:null;
+     if(!target)return;
+     const track=target.getBoundingClientRect();
+     const viewport=scroller.getBoundingClientRect();
+     scroller.scrollLeft+=track.left+track.width/2-(viewport.left+viewport.width/2);
+   });
+   return ()=>window.cancelAnimationFrame(frame);
+ },[day,visibleDaysKey]);
  useEffect(()=>()=>{if(timer.current!==null)clearTimeout(timer.current);if(tapTimer.current!==null)clearTimeout(tapTimer.current);},[]);
 
  const nowKey=dayKey(now);
