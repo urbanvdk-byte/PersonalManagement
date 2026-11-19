@@ -36,10 +36,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
  let cursor=entries[0]?.start??8*60;
  return <section className="schedule-page" aria-label="Расписание дня">
    <div className="schedule-toolbar">
-     <div><div className="schedule-eyebrow">МОЙ РИТМ</div>
-       <h2>Расписание дня</h2>
-       <p>{fmtDate(day,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</p>
-     </div>
+     <p className="schedule-current-date">{fmtDate(day,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</p>
      <div className="schedule-toolbar-actions">
        <button className="schedule-today" onClick={()=>onDayChange(today)}>Сегодня</button>
        <button className="schedule-nav-btn" aria-label="Предыдущий день" onClick={()=>onDayChange(dayKey(addDays(makeDay(day),-1)))}><ChevronLeft size={18}/></button>
@@ -62,9 +59,9 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
      })}
    </div>
    <div className="schedule-summary">
-     <div><span>Запланировано</span><strong>{entries.length}</strong><small>задач и событий</small></div>
-     <div><span>Загрузка</span><strong>{asDuration(dayLoad)}</strong><small>{dayLoad>480?'Плотный день':'Ритм под контролем'}</small></div>
-     <div><span>Задачи</span><strong>{tasks.length-done} <em>/ {tasks.length}</em></strong><small>осталось выполнить</small></div>
+     <div><span>Запланировано</span><strong>{entries.length}</strong></div>
+     <div><span>Загрузка</span><strong>{asDuration(dayLoad)}</strong></div>
+     <div><span>Задачи</span><strong>{tasks.length-done} <em>/ {tasks.length}</em></strong></div>
    </div>
    <div className="schedule-timeline-head"><h3>План по времени</h3><span><Clock3 size={14}/> {day===today?'Сегодня':'Выбранный день'}</span></div>
    <div className="schedule-timeline">

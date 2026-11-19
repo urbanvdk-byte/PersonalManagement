@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, LayoutGrid, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
-import { api, isDemo } from './api';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
+import { api } from './api';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
@@ -18,7 +18,7 @@ const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:
 const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
  {id:'calendar',title:'Календарь',icon:CalendarDays},{id:'schedule',title:'Расписание дня',icon:Clock3},
  {id:'inbox',title:'Входящие',icon:Inbox},
- {id:'tasks',title:'Все задачи',icon:ListTodo},{id:'matrix',title:'Приоритеты',icon:LayoutGrid},
+ {id:'tasks',title:'Все задачи',icon:ListTodo},
  {id:'projects',title:'Проекты',icon:FolderKanban},{id:'goals',title:'Цели',icon:Target},
  {id:'areas',title:'Направления',icon:Target}
 ];
@@ -382,14 +382,13 @@ export default function App(){
  const addSlot=(d:Date)=>open('tasks',{scheduled_at:dateTimeLocal(d),status:'planned'});
  return <div className="app">
   <aside className={'sidebar '+(mobile?'open':'')}>
-   <div className="brand"><div className="brand-icon"><Target size={23}/></div><div><strong>PersonalManagement</strong><span>Мой центр управления</span></div></div>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
    <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
    <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">
-   <header className="topbar"><div className="hero-decoration" aria-hidden="true"></div><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><small>PERSONAL MANAGEMENT <span className="hero-star">✦</span></small><h1>{title}</h1><p className="hero-subtitle">{page==='calendar'?'Ваша неделя и важные моменты':page==='schedule'?'Всё запланированное на выбранный день':'Все важное в одном месте — от идеи до результата'}</p></div></div>
+   <header className="topbar"><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><h1>{title}</h1></div></div>
     <div className="top-actions">{(page==='calendar'||page==='schedule')&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span>{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span></div>}
      <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
@@ -406,7 +405,6 @@ export default function App(){
        value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} maxLength={250}/>
      <button type="submit" disabled={!quickTitle.trim()||quickBusy}>Добавить</button>
    </form>
-   {isDemo&&<div className="demo-banner"><span><strong>Демонстрация GitHub Pages</strong> · Данные только в этом браузере, без синхронизации. Не вводите личную или конфиденциальную информацию.</span><button onClick={()=>{if(window.confirm('Сбросить демонстрационные записи?'))api.resetDemo().then(setData).catch(e=>setError(String(e)))}}>Сбросить демо</button></div>}
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
@@ -452,18 +450,15 @@ export default function App(){
      <button className="inline-add" onClick={()=>open('tasks',{scheduled_at:selectedDay+'T10:00',status:'planned'})}><Plus size={16}/> Добавить в этот день</button>
      <p className="tip">Нажмите на свободную ячейку календаря, чтобы назначить время задаче.</p>
     </aside></div>}
-    {page==='inbox'&&<section className="content narrow"><div className="content-header"><div><h2>Входящие</h2><p>Собирайте здесь всё новое, затем распределяйте по проектам и времени.</p></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><TaskList tasks={filtered.filter(t=>t.status==='inbox')} store={data} edit={setEditing} toggle={toggle} message="Входящие пусты"/></section>}
+    {page==='inbox'&&<section className="content narrow"><div className="content-header"><div><h2>Входящие</h2></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><TaskList tasks={filtered.filter(t=>t.status==='inbox')} store={data} edit={setEditing} toggle={toggle} message="Входящие пусты"/></section>}
     {page==='tasks'&&<section className="content task-groups-page">
-      <div className="content-header"><div><h2>Все задачи</h2><p>Задачи по матрице Эйзенхауэра. Без времени — остаются здесь, запланированные — также видны в календаре.</p></div>
+      <div className="content-header"><div><h2>Все задачи</h2></div>
         <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить задачу</button>
       </div>
       <label className="search"><Search size={18}/><input placeholder="Поиск по названию" aria-label="Поиск задач" value={search} onChange={e=>setSearch(e.target.value)}/></label>
       <PriorityGroups tasks={filtered} store={data} edit={setEditing} toggle={toggle}
         add={priority=>open('tasks',{priority})}/>
     </section>}
-    {page==='matrix'&&<section className="content"><div className="content-header"><div><h2>Матрица Эйзенхауэра</h2><p>Распределение задач по важности и срочности.</p></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><div className="matrix">{[
-      ['Важно и срочно','Сделать в первую очередь'],['Важно, не срочно','Запланировать время'],['Срочно, не важно','Делегировать или упростить'],['Не важно, не срочно','Отложить или исключить']
-     ].map(([name,hint],i)=><div className={'matrix-cell m'+(i+1)} key={name}><header><span className={'priority p'+(i+1)}>P{i+1}</span><div><h3>{name}</h3><small>{hint}</small></div></header>{active.filter(t=>t.priority===i+1).map(t=><button key={t.id} className="matrix-task" onClick={()=>setEditing({kind:'tasks',record:t})}><strong>{t.title}</strong><small>{groupName(t.project_id,data.projects)}</small></button>)}{!active.some(t=>t.priority===i+1)&&<p className="tip">Задач нет</p>}<button className="matrix-add" onClick={()=>open('tasks',{priority:i+1})}><Plus size={15}/> Добавить</button></div>)}</div></section>}
     {page==='projects'&&(selectedProject?
       <ProjectWorkspace project={selectedProject} store={data} reload={load}
         onBack={()=>setSelectedProjectId(null)}
@@ -474,7 +469,7 @@ export default function App(){
         onToggle={toggle}
         onOpenGoal={record=>setEditing({kind:'goals',record})}
         onOpenEvent={record=>setEditing({kind:'events',record})}/> :
-      <section className="content"><div className="content-header"><div><h2>Проекты</h2><p>Откройте проект, чтобы увидеть все связанные задачи, цели, события и направления.</p></div><button className="primary-btn" onClick={()=>open('projects')}><Plus size={16}/> Проект</button></div>
+      <section className="content"><div className="content-header"><div><h2>Проекты</h2></div><button className="primary-btn" onClick={()=>open('projects')}><Plus size={16}/> Проект</button></div>
         <div className="cards">{data.projects.map(p=>{
           const tasks=data.tasks.filter(t=>t.project_id===p.id);
           const done=tasks.filter(t=>t.status==='done').length;
@@ -496,8 +491,8 @@ export default function App(){
         {!data.projects.length&&<div className="empty-card">Создайте первый проект, затем привязывайте задачи, цели, события и направления.</div>}
         </div>
       </section>)}
-    {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Измеримые цели</h2><p>Целевые значения, фактический прогресс, период достижения.</p></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} className="entity-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{percent(g)}%</span></header><h3>{g.title}</h3><p>{groupName(g.project_id,data.projects)}</p><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div><div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую измеримую цель: показатель, период и ожидаемый результат.</div>}</div></section>}
-    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2><p>Постоянные сферы вашей жизни — работа, здоровье, семья, финансы и другие.</p></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji">{areaEmoji(a.emoji)}</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_ids?.includes(a.id)||p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
+    {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Измеримые цели</h2></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} className="entity-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{percent(g)}%</span></header><h3>{g.title}</h3><p>{groupName(g.project_id,data.projects)}</p><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div><div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую измеримую цель: показатель, период и ожидаемый результат.</div>}</div></section>}
+    {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji">{areaEmoji(a.emoji)}</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_ids?.includes(a.id)||p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
     </>}
    </main>
   </div>
