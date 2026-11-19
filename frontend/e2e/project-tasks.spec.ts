@@ -12,7 +12,7 @@ test('task without time saves in list but never in calendar',async({page})=>{
  expect((await storage(page)).tasks.find(t=>t.title==='Без времени')?.scheduled_at).toBeNull();
  await page.locator('.nav-item',{hasText:'Календарь'}).click();
  await expect(page.locator('.cal-item',{hasText:'Без времени'})).toHaveCount(0);
- await expect(page.locator('.day-panel')).not.toContainText('Без времени');
+ await expect(page.locator('.day-plan-task-list')).not.toContainText('Без времени');
 });
 test('calendar requires a scheduled time',async({page})=>{
  await page.goto('/');
@@ -63,7 +63,7 @@ test('project opens its container; multi-direction edit is separate',async({page
  await page.locator('.project-areas-picker input').nth(0).uncheck();
  await page.locator('.drawer button[type="submit"]').click();
  await expect(container.locator('.project-area-tag')).toHaveCount(1);
- await container.locator('.project-section').first().getByRole('button',{name:'Задача'}).click();
+ await container.getByRole('button',{name:'Задача',exact:true}).click();
  await page.locator('.drawer input').first().fill('Задача проекта без времени');
  await expect(page.locator('.drawer button[type="submit"]')).toBeEnabled();
  await page.locator('.drawer button[type="submit"]').click();
