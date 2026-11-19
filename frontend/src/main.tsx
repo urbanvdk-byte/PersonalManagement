@@ -4,4 +4,5 @@ import App from './App';
 import './style.css';
 import './demo-banner.css';
 import './theme.css';
+import './light-theme.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
