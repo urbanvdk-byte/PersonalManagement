@@ -273,6 +273,9 @@ export default function App(){
  const [editing,setEditing]=useState<Editing|null>(null);const [error,setError]=useState('');const [loading,setLoading]=useState(true);
  const [search,setSearch]=useState('');const [mobile,setMobile]=useState(false);
  const [selectedProjectId,setSelectedProjectId]=useState<number|null>(null);
+ const [quickTitle,setQuickTitle]=useState('');
+ const [quickBusy,setQuickBusy]=useState(false);
+ const [backlogOpen,setBacklogOpen]=useState(true);
  const load=async()=>setData(await api.load());
  useEffect(()=>{load().catch(e=>setError(String(e))).finally(()=>setLoading(false))},[]);
  const save=async(kind:Kind,payload:Record<string,unknown>,id?:number)=>{await api.save(kind,payload,id);await load()};
@@ -307,6 +310,24 @@ export default function App(){
      else await save('tasks',changes,task.id);
    }catch(e){setError(e instanceof Error?e.message:String(e));throw e}
  };
+ const unschedule=async(t:Task)=>{
+   if(t.recurrence)throw Error('Повторяющуюся задачу нельзя снять с расписания целиком: измените правило серии.');
+   await save('tasks',{scheduled_at:null,status:'inbox'},t.id);
+ };
+ const tomorrowTask=async(t:Task)=>{
+   const tomorrow=dayKey(addDays(new Date(),1));
+   const time=t.scheduled_at?.slice(11,16)||'09:00';
+   await moveOrResizeTask(t,{scheduled_at:tomorrow+'T'+time,status:'planned'});
+ };
+ const quickCapture=async(e:FormEvent)=>{
+   e.preventDefault();
+   const title=quickTitle.trim();
+   if(!title)return;
+   setQuickBusy(true);
+   try{await save('tasks',{title,status:'inbox',priority:4,important:0,urgent:0});setQuickTitle('');}
+   catch(err){setError(err instanceof Error?err.message:String(err))}
+   finally{setQuickBusy(false)}
+ };
  const remove=async(kind:Kind,id:number)=>{await api.remove(kind,id);await load()};
  const toggle=async(t:Task)=>{
   try{
@@ -324,6 +345,12 @@ export default function App(){
  const selectedProject=data.projects.find(p=>p.id===selectedProjectId);
  const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
  const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay);
+ const topThree=[...selectedTasks].sort((a,b)=>a.priority-b.priority||
+   String(a.scheduled_at).localeCompare(String(b.scheduled_at))).slice(0,3);
+ const dayEvents=data.events.filter(e=>e.starts_at.startsWith(selectedDay));
+ const dayMinutes=selectedTasks.reduce((sum,t)=>sum+t.duration_minutes,0)+
+   dayEvents.reduce((sum,e)=>sum+Math.max(0,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),0);
+ const lateTasks=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<selectedDay&&!selectedTasks.some(x=>x.id===t.id));
  const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
@@ -371,15 +398,46 @@ export default function App(){
     <div className="overview-card"><div className="overview-symbol"><FolderKanban size={18}/></div><div><small>Активных проектов</small><strong>{data.projects.filter(p=>p.status==='active').length} <span>проектов</span></strong></div></div>
     <div className="overview-card"><div className="overview-symbol"><Target size={18}/></div><div><small>Цели на контроле</small><strong>{data.goals.length} <span>целей</span></strong></div></div>
    </section>
+   <form className="quick-capture" onSubmit={quickCapture} aria-label="Быстро добавить задачу">
+     <Plus size={19}/>
+     <input aria-label="Быстрая запись задачи" placeholder="Запишите дело и нажмите Enter — без даты, в задачи"
+       value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} maxLength={250}/>
+     <button type="submit" disabled={!quickTitle.trim()||quickBusy}>Добавить</button>
+   </form>
    {isDemo&&<div className="demo-banner"><span><strong>Демонстрация GitHub Pages</strong> · Данные только в этом браузере, без синхронизации. Не вводите личную или конфиденциальную информацию.</span><button onClick={()=>{if(window.confirm('Сбросить демонстрационные записи?'))api.resetDemo().then(setData).catch(e=>setError(String(e)))}}>Сбросить демо</button></div>}
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')}><X size={16}/></button></div>}
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
-    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask}/><aside className="day-panel">
+    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}/><aside className="day-panel">
      <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onRange={pickMonthRange} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})} onToday={resetToday}/>
+     <div className="backlog-toggle"><button aria-expanded={backlogOpen} onClick={()=>setBacklogOpen(!backlogOpen)}>
+       {backlogOpen?'▾':'▸'} Незапланированные <span>{active.filter(t=>!t.scheduled_at).length}</span>
+     </button></div>
+     {backlogOpen&&<CalendarBacklog tasks={active.filter(t=>!t.scheduled_at)}
+        onSchedule={async(task,when)=>{await moveOrResizeTask(task,{scheduled_at:when,status:'planned'});}}
+        onOpen={task=>setEditing({kind:'tasks',record:task})}/>}
      <div className="day-plan-heading"><small>ПЛАН ДНЯ</small></div><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
-     <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div><h3>Задачи</h3>
-     <TaskList tasks={selectedTasks} store={data} edit={setEditing} toggle={toggle} message="На этот день задач пока нет"/>
+     <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div>
+     <section className="day-focus"><h3>Три главных дела</h3>
+       {topThree.length?topThree.map((t,i)=><div className="day-focus-row" key={t.id+'-'+t.occurrence_date}>
+         <span>{i+1}</span><button onClick={()=>setEditing({kind:'tasks',record:t})}>{t.title}</button>
+         <small>P{t.priority}</small>
+       </div>):<p className="tip">Запланируйте задачи — здесь появятся три главных по приоритету.</p>}
+     </section>
+     <div className="day-load"><div><strong>Загрузка дня</strong><span>{Math.round(dayMinutes/60*10)/10} из 8 ч</span></div>
+       <div className="day-load-track"><span style={{width:Math.min(100,dayMinutes/480*100)+'%',background:dayMinutes>480?'#e36542':'#ff963b'}}/></div>
+       {dayMinutes>480&&<small>На день назначено больше 8 часов задач и событий.</small>}
+     </div>
+     {lateTasks.length>0&&<details className="late-tasks"><summary>Просроченные · {lateTasks.length}</summary>
+       {lateTasks.slice(0,5).map(t=><div key={t.id}><span>{t.title}</span>
+         <button onClick={()=>void tomorrowTask(t).catch(e=>setError(String(e)))}>На завтра</button></div>)}
+     </details>}
+     <h3>Задачи</h3>
+     <div className="day-plan-task-list">{selectedTasks.map(t=><div key={t.id+'-'+t.occurrence_date} className="day-plan-task">
+       <button className="day-plan-title" onClick={()=>setEditing({kind:'tasks',record:t})}>{t.title}</button>
+       <button title="Перенести на завтра" aria-label={'На завтра: '+t.title}
+          onClick={()=>void tomorrowTask(t).catch(e=>setError(String(e)))}><ArrowRight size={14}/> Завтра</button>
+     </div>)}{!selectedTasks.length&&<p className="tip">На этот день задач пока нет</p>}</div>
      {selectedEvents.length>0&&<><h3>События</h3>{selectedEvents.map(e=><button className="event-row" key={e.id} onClick={()=>setEditing({kind:'events',record:e})}><span style={{background:e.color}}/><div><strong>{e.title}</strong><small>{fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></div></button>)}</>}
      <button className="inline-add" onClick={()=>open('tasks',{scheduled_at:selectedDay+'T10:00',status:'planned'})}><Plus size={16}/> Добавить в этот день</button>
      <p className="tip">Нажмите на свободную ячейку календаря, чтобы назначить время задаче.</p>
@@ -397,7 +455,7 @@ export default function App(){
       ['Важно и срочно','Сделать в первую очередь'],['Важно, не срочно','Запланировать время'],['Срочно, не важно','Делегировать или упростить'],['Не важно, не срочно','Отложить или исключить']
      ].map(([name,hint],i)=><div className={'matrix-cell m'+(i+1)} key={name}><header><span className={'priority p'+(i+1)}>P{i+1}</span><div><h3>{name}</h3><small>{hint}</small></div></header>{active.filter(t=>t.priority===i+1).map(t=><button key={t.id} className="matrix-task" onClick={()=>setEditing({kind:'tasks',record:t})}><strong>{t.title}</strong><small>{groupName(t.project_id,data.projects)}</small></button>)}{!active.some(t=>t.priority===i+1)&&<p className="tip">Задач нет</p>}<button className="matrix-add" onClick={()=>open('tasks',{priority:i+1})}><Plus size={15}/> Добавить</button></div>)}</div></section>}
     {page==='projects'&&(selectedProject?
-      <ProjectWorkspace project={selectedProject} store={data}
+      <ProjectWorkspace project={selectedProject} store={data} reload={load}
         onBack={()=>setSelectedProjectId(null)}
         onEdit={()=>setEditing({kind:'projects',record:selectedProject})}
         onCreate={kind=>open(kind,{project_id:selectedProject.id,
@@ -433,6 +491,6 @@ export default function App(){
     </>}
    </main>
   </div>
-  {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+'-'+((editing.record as Task|undefined)?.occurrence_date||'')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove} saveRecurring={saveRecurring} removeRecurring={removeRecurring}/>}
+  {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+'-'+((editing.record as Task|undefined)?.occurrence_date||'')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove} saveRecurring={saveRecurring} removeRecurring={removeRecurring} reload={load} unschedule={unschedule}/>} 
  </div>
 }
