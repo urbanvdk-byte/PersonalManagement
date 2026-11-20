@@ -49,7 +49,7 @@ test('goal direction emoji stays visible in mobile cards',async({browser})=>{
  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
  const page=await context.newPage();
  await page.goto('/');
- await page.getByRole('button',{name:'Ещё'}).last().click();
+ await page.getByRole('button',{name:'Другие разделы'}).click();
  await page.locator('.nav-item',{hasText:'Цели'}).click();
  const goal=page.locator('.goal-card').filter({hasText:'Провести 4 тренировки за месяц'});
  await goal.scrollIntoViewIfNeeded();
