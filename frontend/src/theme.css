@@ -967,3 +967,31 @@ details[open]>.priority-summary .priority-chevron{transform:rotate(90deg)}
  .milestone-add{grid-template-columns:1fr}
  .project-next{flex-wrap:wrap}
 }
+
+/* Mobile calendar: pin the entire 64px time gutter while days scroll.
+   Keep vertical scrolling native so the hour labels follow their time slots.
+   A solid background and higher stacking order prevent appointments and
+   grid lines from showing through the stationary rail. */
+@media(max-width:760px){
+ .calendar-scroll .cal-head>.rail-label,
+ .calendar-scroll .all-day>.rail-label{
+   position:sticky;
+   left:0;
+   z-index:2;
+   background:#fff;
+   box-shadow:1px 0 0 #e1e8f2;
+ }
+ .calendar-scroll .time-rail{
+   position:sticky;
+   left:0;
+   z-index:8;
+   align-self:stretch;
+   background:#fff;
+   box-shadow:2px 0 5px rgba(18,51,105,.10);
+   border-right:1px solid #e1e8f2;
+ }
+ .calendar-scroll .time-rail span{
+   color:#617995;
+   font-variant-numeric:tabular-nums;
+ }
+}
