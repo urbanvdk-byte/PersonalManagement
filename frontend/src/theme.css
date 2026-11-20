@@ -995,3 +995,7 @@ details[open]>.priority-summary .priority-chevron{transform:rotate(90deg)}
    font-variant-numeric:tabular-nums;
  }
 }
+
+/* Task and event cards both provide the same next-day action. */
+.cal-item.event-block{padding-right:24px!important}
+.cal-tomorrow:disabled{opacity:.45;cursor:wait}
