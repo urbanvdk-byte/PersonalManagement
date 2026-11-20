@@ -42,7 +42,7 @@ test('goal without a direction or associated project shows no emoji and remains 
  await expect(card.locator('.goal-direction-emoji')).toHaveCount(0);
  await card.click();
  await expect(page.locator('.drawer')).toBeVisible();
- await expect(page.locator('.drawer')).toContainText('Провести 4 тренировки за месяц');
+ await expect(page.locator('.drawer input').first()).toHaveValue('Провести 4 тренировки за месяц');
 });
 
 test('goal direction emoji stays visible in mobile cards',async({browser})=>{
