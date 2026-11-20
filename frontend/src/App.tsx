@@ -503,7 +503,7 @@ export default function App(){
        {id:'calendar' as Page,title:'Календарь',icon:CalendarDays},
        {id:'schedule' as Page,title:'День',icon:Clock3},
        {id:'tasks' as Page,title:'Задачи',icon:ListTodo},
-       {id:'projects' as Page,title:'Проекты',icon:FolderKanban}
+       {id:'inbox' as Page,title:'Входящие',icon:Inbox}
      ].map(link=><button key={link.id} aria-current={page===link.id?'page':undefined}
        className={page===link.id?'active':''}
        onClick={()=>{if(link.id==='schedule')goToDay(dayKey(new Date()));setPage(link.id);setSelectedProjectId(null);setMobile(false);}}>
