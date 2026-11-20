@@ -6,7 +6,7 @@ import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
 import {expandTasks} from './recurrence';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
 import {HOUR_HEIGHT,fromTime,movePreview,resizePreview,toScheduledAt,isPreviewChanged,type CalendarPreview,type GestureMode} from './calendarInteraction';
-import type {Editing,Store,Task} from './types';
+import type {Editing,Store,Task,EventItem} from './types';
 
 const START=0;
 const END=24;
@@ -18,6 +18,7 @@ type Props={
   setDay:(date:string)=>void;edit:(item:Editing)=>void;slot:(date:Date)=>void;
   updateTask:(task:Task,changes:Record<string,unknown>)=>Promise<void>;
   onTomorrow:(task:Task)=>Promise<void>;
+  onTomorrowEvent:(event:EventItem)=>Promise<void>;
   onDropTask:(taskId:number,when:string)=>Promise<void>;
 };
 type Gesture={
@@ -26,12 +27,14 @@ type Gesture={
   active:boolean;moved:boolean;preview:CalendarPreview;
 };
 
-export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow,onDropTask}:Props){
+export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow,onTomorrowEvent,onDropTask}:Props){
  const days=selectedCalendarDays(start,selection);
  const hours=Array.from({length:END-START},(_,i)=>i+START);
  const [now,setNow]=useState(()=>new Date());
  const [preview,setPreview]=useState<CalendarPreview|null>(null);
  const [saving,setSaving]=useState(false);
+ const [shifting,setShifting]=useState<string|null>(null);
+ const [shiftError,setShiftError]=useState('');
  const scrollRef=useRef<HTMLDivElement|null>(null);
  const gesture=useRef<Gesture|null>(null);
  const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -252,6 +255,21 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    if(gesture.current?.pointerId!==e.pointerId)return;
    clearTimer();gesture.current=null;showPreview(null);
  }
+ async function shiftCard(kind:'tasks'|'events',record:Task|EventItem){
+   if(shifting)return;
+   setShiftError('');
+   const key=kind+'-'+record.id;
+   setShifting(key);
+   // The save callback reloads the affected card before another click.
+   try{
+     if(kind==='tasks')await onTomorrow(record as Task);
+     else await onTomorrowEvent(record as EventItem);
+   }catch(err){
+     setShiftError(err instanceof Error?err.message:String(err));
+   }finally{
+     setShifting(null);
+   }
+ }
  return <div ref={scrollRef} className="calendar-scroll" aria-label="Календарная сетка: перетаскивайте задачи или меняйте длительность за край">
   <div className="cal-inner" style={{minWidth:innerWidth}}>
    <div className="cal-row cal-head" style={columns}><div className="rail-label">МЕСТН.</div>{days.map(d=>{
@@ -301,6 +319,8 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             data-layout-column={location?.column??0}
             data-layout-columns={location?.columns??1}
             data-layout-span={location?.span??1}
+            data-item-id={b.id}
+            data-occurrence-date={task?(b.record as Task).occurrence_date:undefined}
             onPointerDown={task?e=>{
               const side=(e.target as HTMLElement).closest<HTMLElement>('[data-resize]')?.dataset.resize;
               const mode:GestureMode=side==='start'?'resize-start':side==='end'?'resize-end':'move';
@@ -321,13 +341,14 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             <strong>{task&&b.record.recurrence?'↻ ':''}{b.title}</strong>
             {!(task&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
             {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
-            {task&&<button type="button" className="cal-tomorrow" title="Перенести на завтра"
-              aria-label={'Перенести на завтра: '+b.title}
+            <button type="button" className="cal-tomorrow" title="Перенести на следующий день"
+              aria-label={'Перенести на следующий день: '+b.title}
+              disabled={shifting!==null}
               onPointerDown={e=>e.stopPropagation()}
               onPointerUp={e=>e.stopPropagation()}
-              onClick={e=>{e.stopPropagation();void onTomorrow(b.record as Task).catch(()=>{});}}>
+              onClick={e=>{e.stopPropagation();void shiftCard(b.kind,b.record);}}>
               <ArrowRight size={12}/>
-            </button>}
+            </button>
             {task&&<>
               <span className="calendar-resize-edge top-edge" data-resize="start" aria-hidden="true"/>
               <span className="calendar-resize-edge bottom-edge" data-resize="end" aria-hidden="true"/>
@@ -351,8 +372,9 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
     })}
    </div>
   </div>
-  {(preview||saving)&&<div className="calendar-gesture-status" role="status">
-    {saving?'Сохраняю…':preview?.mode==='move'?'Перенос: '+preview.day+' '+toScheduledAt(preview.day,preview.minute).slice(11,16):
+  {shiftError&&<div className="calendar-gesture-status" role="alert">{shiftError}</div>}
+  {(preview||saving||shifting)&&<div className="calendar-gesture-status" role="status">
+    {saving||shifting?'Сохраняю…':preview?.mode==='move'?'Перенос: '+preview.day+' '+toScheduledAt(preview.day,preview.minute).slice(11,16):
       'Длительность: '+preview?.duration+' минут'}
   </div>}
  </div>;

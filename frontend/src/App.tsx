@@ -11,6 +11,7 @@ import {ProjectMilestones,ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
+import {nextTaskDay,nextEventDay} from './nextDay';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Project, Store, Task } from './types';
 
@@ -317,9 +318,10 @@ export default function App(){
    await save('tasks',{scheduled_at:null,status:'inbox'},t.id);
  };
  const tomorrowTask=async(t:Task)=>{
-   const tomorrow=dayKey(addDays(new Date(),1));
-   const time=t.scheduled_at?.slice(11,16)||'09:00';
-   await moveOrResizeTask(t,{scheduled_at:tomorrow+'T'+time,status:'planned'});
+   await moveOrResizeTask(t,nextTaskDay(t));
+ };
+ const tomorrowEvent=async(event:EventItem)=>{
+   await save('events',nextEventDay(event),event.id);
  };
  const quickCapture=async(e:FormEvent)=>{
    e.preventDefault();
@@ -411,7 +413,7 @@ export default function App(){
     {page==='schedule'&&<DaySchedule day={selectedDay} onDayChange={goToDay} store={data}
        onEdit={setEditing} onToggle={toggle}
        onAdd={()=>open('tasks',{scheduled_at:selectedDay+'T09:00',status:'planned'})}/>}
-    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}
+    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask} onTomorrowEvent={tomorrowEvent}
       onDropTask={async(taskId,when)=>{
         const task=data.tasks.find(t=>t.id===taskId);
         if(!task||task.scheduled_at)throw Error('Задача для переноса не найдена');
