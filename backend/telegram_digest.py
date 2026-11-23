@@ -51,12 +51,12 @@ def occurrence_rows(conn,day:str)->list[dict]:
 def report(conn,mode:str,now:datetime)->tuple[str,str]:
     day=now.date().isoformat()
     scheduled=occurrence_rows(conn,day)
-    events=[dict(r) for r in conn.execute("SELECT * FROM events WHERE substr(starts_at,1,10)=? ORDER BY starts_at",(day,))]
+    events=[dict(r) for r in conn.execute("SELECT * FROM events WHERE substr(starts_at,1,10)=%s ORDER BY starts_at",(day,))]
     if mode=="morning":
         important=sorted(scheduled,key=lambda t:(t["priority"],t["scheduled_at"]))[:3]
         overdue=conn.execute("""SELECT count(*) FROM tasks
           WHERE status NOT IN ('done','cancelled') AND due_at IS NOT NULL
-          AND substr(due_at,1,10) < ?""",(day,)).fetchone()[0]
+          AND substr(due_at,1,10) < %s""",(day,)).fetchone()["count"]
         load=sum(int(t["duration_minutes"]) for t in scheduled)
         load+=sum(max(0,int((datetime.fromisoformat(e["ends_at"])-datetime.fromisoformat(e["starts_at"])).total_seconds()/60)) for e in events)
         lines=["☀️ План на "+now.strftime("%d.%m.%Y"),
@@ -71,7 +71,7 @@ def report(conn,mode:str,now:datetime)->tuple[str,str]:
         return "morning:"+day,"\n".join(lines)
     if mode=="evening":
         finished=conn.execute("""SELECT count(*) FROM tasks WHERE status='done' AND
-             substr(updated_at,1,10)=?""",(day,)).fetchone()[0]
+             substr(updated_at,1,10)=%s""",(day,)).fetchone()["count"]
         unfinished=sum(1 for t in scheduled if open_status(t))
         return "evening:"+day,(
           "🌙 Итоги "+now.strftime("%d.%m.%Y")+f"\nВыполнено задач: {finished}"
@@ -118,11 +118,11 @@ def process(mode:str,now:datetime,dry_run:bool)->list[str]:
         sent=[]
         for identity,text in notifications:
             if not text:continue
-            exists=conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=?",(identity,)).fetchone()
+            exists=conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(identity,)).fetchone()
             if exists and not dry_run:continue
             if dry_run:sent.append(text);continue
             transmit(text)
-            conn.execute("INSERT OR IGNORE INTO telegram_sent(message_key) VALUES (?)",(identity,))
+            conn.execute("INSERT INTO telegram_sent(message_key) VALUES (%s) ON CONFLICT DO NOTHING",(identity,))
             sent.append(text)
         return sent
 
