@@ -1,4 +1,5 @@
 import type {Kind,Store} from './types';
+import {OfflineEngine,type OfflineOperation} from './offline';
 import {addDays,dateTimeLocal,dayKey,weekStart} from './date';
 import {DEFAULT_TASK_COLOR} from './taskPalette';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
@@ -58,7 +59,9 @@ function initialDemo():Store{
     ]
   };
 }
+let offlineDraft:Store|null=null;
 function loadDemo():Store{
+  if(offlineDraft!==null)return offlineDraft;
   try{
     const raw=localStorage.getItem(STORAGE_KEY);
     if(raw){
@@ -86,7 +89,7 @@ function loadDemo():Store{
     throw Error('Не удалось прочитать данные демо из браузера. Проверьте доступность localStorage. '+String(e));
   }
 }
-function storeDemo(data:Store){localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}
+function storeDemo(data:Store){if(offlineDraft!==null){offlineDraft=data;return;}localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}
 type Row=Record<string,unknown>;
 const defaults:Record<Kind,Row>={
   areas:{color:'#4689db',emoji:'📁'},
@@ -191,7 +194,7 @@ async function exportData():Promise<unknown>{
     : request<unknown>('/api/export');
 }
 async function download(){
-  const json=JSON.stringify(await exportData(),null,2);
+  const json=JSON.stringify(isDemo?await exportData():await offlineEngine.exportBackup(),null,2);
   const blob=new Blob([json],{type:'application/json;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const link=document.createElement('a');
@@ -209,8 +212,8 @@ async function resetDemo(){
 
 const ALLOWED_OCCURRENCE_FIELDS=new Set(['title','notes','priority','important','urgent','status','scheduled_at','due_at','duration_minutes','color','area_id','project_id','goal_id']);
 async function saveOccurrence(taskId:number,day:string,changes:Row,revision?:number):Promise<void>{
-  if(!isDemo){
-    await request('/api/task-occurrences/'+taskId+'/'+day,{method:'PUT',headers:versionHeaders(revision),body:JSON.stringify({changes})});
+  if(!isDemo&&offlineDraft===null){
+    await offlineEngine.mutate({action:'occurrence',kind:'tasks',item_id:taskId,day,values:changes,revision});
     return;
   }
   const data=loadDemo();
@@ -231,7 +234,10 @@ async function saveOccurrence(taskId:number,day:string,changes:Row,revision?:num
   storeDemo(data);
 }
 async function resetOccurrence(taskId:number,day:string,revision?:number):Promise<void>{
-  if(!isDemo){await request<void>('/api/task-occurrences/'+taskId+'/'+day,{method:'DELETE',headers:versionHeaders(revision)});return;}
+  if(!isDemo&&offlineDraft===null){
+    await offlineEngine.mutate({action:'reset_occurrence',kind:'tasks',item_id:taskId,day,values:{},revision});
+    return;
+  }
   const data=loadDemo();
   const task=data.tasks.find(x=>x.id===taskId);
   if(!task||!isOccurrenceDate(task,day))throw Error('Дата не относится к серии');
@@ -241,8 +247,8 @@ async function resetOccurrence(taskId:number,day:string,revision?:number):Promis
   storeDemo(data);
 }
 async function splitSeries(taskId:number,day:string,changes:Row,revision?:number):Promise<void>{
-  if(!isDemo){
-    await request('/api/task-series/'+taskId+'/split',{method:'POST',headers:versionHeaders(revision),body:JSON.stringify({occurrence_date:day,changes})});
+  if(!isDemo&&offlineDraft===null){
+    await offlineEngine.mutate({action:'split',kind:'tasks',item_id:taskId,day,values:changes,revision});
     return;
   }
   const data=loadDemo();
@@ -275,9 +281,8 @@ function writeActivity(data:Store,projectId:number|null,message:string){
  data.activity=records.slice(0,500);
 }
 async function createExtra(kind:ExtraKind,parentId:number,details:Row):Promise<void>{
- if(!isDemo){
-   await request('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind,
-     {method:'POST',body:JSON.stringify(details)});
+ if(!isDemo&&offlineDraft===null){
+   await offlineEngine.mutate({action:'extra_add',kind,parent_id:parentId,values:details});
    return;
  }
  const title=String(details.title||'').trim();
@@ -300,9 +305,8 @@ async function createExtra(kind:ExtraKind,parentId:number,details:Row):Promise<v
  storeDemo(data);
 }
 async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row,revision?:number):Promise<void>{
- if(!isDemo){
-   await request('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,
-      {method:'PATCH',headers:versionHeaders(revision),body:JSON.stringify(details)});
+ if(!isDemo&&offlineDraft===null){
+   await offlineEngine.mutate({action:'extra_update',kind,parent_id:parentId,item_id:id,values:details,revision});
    return;
  }
  const data=loadDemo();
@@ -320,8 +324,8 @@ async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row,
  storeDemo(data);
 }
 async function removeExtra(kind:ExtraKind,parentId:number,id:number,revision?:number):Promise<void>{
- if(!isDemo){
-   await request<void>('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,{method:'DELETE',headers:versionHeaders(revision)});
+ if(!isDemo&&offlineDraft===null){
+   await offlineEngine.mutate({action:'extra_remove',kind,parent_id:parentId,item_id:id,values:{},revision});
    return;
  }
  const data=loadDemo();
@@ -335,12 +339,55 @@ async function removeExtra(kind:ExtraKind,parentId:number,id:number,revision?:nu
  storeDemo(data);
 }
 
+
+/** Run the existing local edit rules against an isolated IndexedDB snapshot. */
+async function applyOffline(data:Store,operation:OfflineOperation):Promise<Store>{
+ if(offlineDraft!==null)throw Error('Одновременная локальная операция не поддерживается');
+ offlineDraft=structuredClone(data);
+ try{
+  const kind=operation.kind;
+  const before=new Set<number>(
+   kind==='checklist'?(offlineDraft.checklist||[]).map(x=>x.id):
+   kind==='milestones'?(offlineDraft.milestones||[]).map(x=>x.id):
+   (offlineDraft[kind as Kind] as Array<{id:number}>).map(x=>x.id)
+  );
+  switch(operation.action){
+   case 'save':await demoSave(kind as Kind,{...operation.values},operation.item_id,operation.revision);break;
+   case 'remove':await demoRemove(kind as Kind,operation.item_id!,operation.revision);break;
+   case 'occurrence':await saveOccurrence(operation.item_id!,operation.day!,{...operation.values},operation.revision);break;
+   case 'reset_occurrence':await resetOccurrence(operation.item_id!,operation.day!,operation.revision);break;
+   case 'split':await splitSeries(operation.item_id!,operation.day!,{...operation.values},operation.revision);break;
+   case 'extra_add':await createExtra(kind as ExtraKind,operation.parent_id!,{...operation.values});break;
+   case 'extra_update':await updateExtra(kind as ExtraKind,operation.parent_id!,operation.item_id!,{...operation.values},operation.revision);break;
+   case 'extra_remove':await removeExtra(kind as ExtraKind,operation.parent_id!,operation.item_id!,operation.revision);break;
+  }
+  const updated=offlineDraft;
+  if(operation.temp_id!==undefined){
+   const collection=operation.action==='split'?updated.tasks:
+    kind==='checklist'?(updated.checklist||[]):
+    kind==='milestones'?(updated.milestones||[]):
+    updated[kind as Kind];
+   const created=collection.find(x=>!before.has(x.id));
+   if(!created)throw Error('Не найдена новая запись для офлайн-ID');
+   const oldId=created.id;
+   created.id=operation.temp_id;
+   if(operation.action==='split')
+    updated.occurrences=(updated.occurrences||[]).map(x=>x.task_id===oldId?{...x,task_id:operation.temp_id!}:x);
+   if(kind==='projects')
+    updated.activity=(updated.activity||[]).map(x=>x.project_id===oldId?{...x,project_id:operation.temp_id!}:x);
+  }
+  return updated;
+ }finally{offlineDraft=null;}
+}
+const offlineEngine=new OfflineEngine(applyOffline);
+
 export const api={
-  load:()=>isDemo?Promise.resolve(loadDemo()):request<Store>('/api/bootstrap'),
-  save:(kind:Kind,data:Row,id?:number,revision?:number)=>isDemo?demoSave(kind,data,id,revision):request('/api/'+kind+(id?'/'+id:''),{method:id?'PATCH':'POST',headers:versionHeaders(revision),body:JSON.stringify(data)}),
-  remove:(kind:Kind,id:number,revision?:number)=>isDemo?demoRemove(kind,id,revision):request<void>('/api/'+kind+'/'+id,{method:'DELETE',headers:versionHeaders(revision)}),
+  load:()=>isDemo?Promise.resolve(loadDemo()):offlineEngine.load(),
+  save:(kind:Kind,data:Row,id?:number,revision?:number)=>isDemo?demoSave(kind,data,id,revision):offlineEngine.mutate({action:'save',kind,item_id:id,values:data,revision}),
+  remove:(kind:Kind,id:number,revision?:number)=>isDemo?demoRemove(kind,id,revision):offlineEngine.mutate({action:'remove',kind,item_id:id,values:{},revision}),
   download,
   resetDemo,
+  offline:offlineEngine,
   saveOccurrence,
   resetOccurrence,
   splitSeries,
