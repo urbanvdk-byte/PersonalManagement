@@ -6,7 +6,6 @@ from telegram_digest import report,process
 from app import connection,setup
 
 def test_telegram_previews_and_idempotency(tmp_path,monkeypatch):
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"telegram.db"))
     monkeypatch.setenv("APP_PASSWORD","testing")
     setup()
     with connection() as conn:
@@ -27,5 +26,5 @@ def test_telegram_previews_and_idempotency(tmp_path,monkeypatch):
     assert process("morning",now,True)
     # No outbound request unless explicitly configured; sent rows suppress duplicates.
     with connection() as conn:
-        conn.execute("INSERT INTO telegram_sent(message_key) VALUES (?)",("morning:2026-11-20",))
+        conn.execute("INSERT INTO telegram_sent(message_key) VALUES (%s)",("morning:2026-11-20",))
     assert process("morning",now,False)==[]
