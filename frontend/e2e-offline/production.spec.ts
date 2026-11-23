@@ -57,7 +57,7 @@ test('offline project and its task keep their relationship during ID remapping',
  drawer=page.getByRole('dialog',{name:'Редактирование'});
  await drawer.locator('input').first().fill(task);
  await drawer.getByRole('button',{name:'Сохранить'}).click();
- await expect(page.locator('.project-workspace').getByText(task)).toBeVisible();
+ await expect(page.locator('.project-workspace .task-list').getByText(task).first()).toBeVisible();
  await expect(page.getByText('2 изменений ожидают отправки')).toBeVisible();
 
  await context.setOffline(false);
