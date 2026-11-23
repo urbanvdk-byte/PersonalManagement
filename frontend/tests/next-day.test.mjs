@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {nextScheduledDay,nextTaskDay,nextEventDay} from '../src/nextDay.ts';
+import {nextScheduledDay,nextTaskDay,nextEventDay,nextOverdueTask} from '../src/nextDay.ts';
 
 test('second and third clicks advance relative to the appointment, not today',()=>{
  const first={scheduled_at:'2026-11-20T17:00'};
@@ -25,4 +25,10 @@ test('events move together and retain end time, even across midnight',()=>{
  const second=nextEventDay(first);
  assert.deepEqual(second,{starts_at:'2026-11-21T23:30',ends_at:'2026-11-22T00:30'});
  assert.deepEqual(nextEventDay(second),{starts_at:'2026-11-22T23:30',ends_at:'2026-11-23T00:30'});
+});
+
+test('overdue action plans unscheduled and old tasks relative to the displayed day',()=>{
+ assert.deepEqual(nextOverdueTask({scheduled_at:null},'2026-11-23'),{scheduled_at:'2026-11-24T09:00',status:'planned'});
+ assert.deepEqual(nextOverdueTask({scheduled_at:'2026-05-05T17:00'},'2026-11-23'),{scheduled_at:'2026-11-24T17:00',status:'planned'});
+ assert.deepEqual(nextOverdueTask({scheduled_at:'2026-12-31T18:30'},'2026-12-31'),{scheduled_at:'2027-01-01T18:30',status:'planned'});
 });
