@@ -6,13 +6,20 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 STATIC_DIR=/app/static DATABASE_PATH=/app/data/personalmanagement.db
-WORKDIR /app
-COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-COPY backend/app.py /app/app.py
-COPY --from=webbuild /web/dist/ /app/static/
-RUN mkdir -p /app/data && useradd -r -u 10001 planner && chown -R planner:planner /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    STATIC_DIR=/usr/src/personalmanagement/static \
+    DATABASE_PATH=/app/data/personalmanagement.db \
+    PORT=3000
+WORKDIR /usr/src/personalmanagement
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/app.py ./app.py
+COPY --from=webbuild /web/dist/ ./static/
+# Bothost can mount source files over /app; keep executable code and static
+# assets outside /app while reserving /app/data for persistent SQLite storage.
+RUN mkdir -p /app/data \
+    && useradd -r -u 10001 planner \
+    && chown -R planner:planner /usr/src/personalmanagement /app/data
 USER planner
-EXPOSE 8000
-CMD ["uvicorn","app:app","--host","0.0.0.0","--port","8000"]
+EXPOSE 3000
+CMD ["sh","-c","exec uvicorn app:app --host 0.0.0.0 --port \"${PORT:-3000}\""]

@@ -36,5 +36,5 @@ function offlineShell():Plugin{
 export default defineConfig({
  base:process.env.VITE_BASE_PATH||'/',
  plugins:[react(),offlineShell()],
- server:{proxy:{'/api':{target:'http://127.0.0.1:8000',changeOrigin:true}}}
+ server:{proxy:{'/api':{target:'http://127.0.0.1:3000',changeOrigin:true}}}
 });

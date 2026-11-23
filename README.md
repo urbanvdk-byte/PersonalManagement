@@ -14,10 +14,10 @@
 
 1. Скопируйте `.env.example` в `.env`. Установите **уникальный сильный** `APP_PASSWORD`.
 2. Запустите `docker compose up --build -d`.
-3. Откройте `http://localhost:8000` (на внешнем сервере **только через HTTPS**).
+3. Откройте `http://localhost:3000` (на внешнем сервере **только через HTTPS**).
 4. Введите логин из `APP_USERNAME` (по умолчанию `owner`) и пароль `APP_PASSWORD`.
 
-Для Bothost: подключите репозиторий как Docker-приложение, укажите переменную `APP_PASSWORD`, порт 8000 и **постоянный том** для `/app/data`. Перед реальным использованием проверьте на своей конфигурации, что том сохраняется между деплоями. Домен должен использовать HTTPS.
+Для Bothost: подключите репозиторий как Docker-приложение, установите **`PORT=3000`** и `APP_PASSWORD`, укажите **внутренний порт 3000** и **постоянный том** для `/app/data`. Перед реальным использованием проверьте на своей конфигурации, что том сохраняется между деплоями. Домен должен использовать HTTPS. Код и статические файлы Docker-сборки находятся в `/usr/src/personalmanagement` и не перекрываются монтированием каталога `/app`; только SQLite хранится в `/app/data/personalmanagement.db`.
 
 ## Разработка
 
@@ -28,7 +28,7 @@ cd backend
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-APP_PASSWORD=dev-only DATABASE_PATH=./data/dev.db STATIC_DIR=../frontend/dist uvicorn app:app --reload --port 8000
+APP_PASSWORD=dev-only DATABASE_PATH=./data/dev.db STATIC_DIR=../frontend/dist uvicorn app:app --reload --port 3000
 ```
 
 Frontend (Node.js 22):
@@ -39,7 +39,7 @@ npm install
 npm run dev
 ```
 
-Откройте порт Vite (5173), который проксирует `/api` в FastAPI (8000).
+Откройте порт Vite (5173), который проксирует `/api` в FastAPI (3000).
 
 Тесты: `cd backend && pytest -q`. Проверка frontend: `cd frontend && npm run build`.
 
@@ -214,6 +214,6 @@ npm run dev
 
 Для локальной проверки полной production-цепочки:
 `npx playwright test --config=playwright.offline.config.ts` из `frontend/`
-при запущенном FastAPI на `127.0.0.1:8000` с тестовым паролем
+при запущенном FastAPI на `127.0.0.1:3000` с тестовым паролем
 `offline-test-password` и обслуживанием собранной директории `frontend/dist`.
 Проверка также запускается в GitHub Actions (job `offline-e2e`).
