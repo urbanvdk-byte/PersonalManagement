@@ -19,10 +19,10 @@ export default function TaskChecklist({taskId,items,reload}:{
    <h3>Чек-лист <small>{done}/{items.length}</small></h3>
    {items.map(item=><div className="checklist-item" key={item.id}>
      <label><input type="checkbox" checked={Boolean(item.done)} disabled={busy}
-       onChange={e=>void change(()=>api.updateChecklist(taskId,item.id,{done:e.target.checked?1:0}))}/>
+       onChange={e=>void change(()=>api.updateChecklist(taskId,item.id,{done:e.target.checked?1:0},item.revision))}/>
        <span className={item.done?'done':''}>{item.title}</span></label>
      <button type="button" aria-label={'Удалить пункт '+item.title} disabled={busy}
-       onClick={()=>void change(()=>api.deleteChecklist(taskId,item.id))}><Trash2 size={13}/></button>
+       onClick={()=>void change(()=>api.deleteChecklist(taskId,item.id,item.revision))}><Trash2 size={13}/></button>
    </div>)}
    <div className="checklist-add">
      <input aria-label="Новый пункт чек-листа" placeholder="Новый пункт…" value={title}

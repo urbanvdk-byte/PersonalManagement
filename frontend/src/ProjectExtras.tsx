@@ -20,10 +20,10 @@ export function ProjectMilestones({projectId,items,reload}:{
    <header><div><h3>Этапы и контрольные точки</h3><small>{items.filter(x=>x.done).length} из {items.length} завершены</small></div></header>
    {items.map(item=><div className="milestone-row" key={item.id}>
      <label><input type="checkbox" checked={Boolean(item.done)} disabled={busy}
-       onChange={e=>void action(()=>api.updateMilestone(projectId,item.id,{done:e.target.checked?1:0}))}/>
+       onChange={e=>void action(()=>api.updateMilestone(projectId,item.id,{done:e.target.checked?1:0},item.revision))}/>
        <span className={item.done?'done':''}>{item.title}{item.due_date&&<small>До {fmtDate(item.due_date)}</small>}</span></label>
      <button type="button" disabled={busy} aria-label={'Удалить этап '+item.title}
-       onClick={()=>void action(()=>api.deleteMilestone(projectId,item.id))}><Trash2 size={14}/></button>
+       onClick={()=>void action(()=>api.deleteMilestone(projectId,item.id,item.revision))}><Trash2 size={14}/></button>
    </div>)}
    <div className="milestone-add">
      <input aria-label="Название нового этапа" placeholder="Новый этап проекта" value={title} onChange={e=>setTitle(e.target.value)}/>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
-import { api } from './api';
+import { api,isDemo } from './api';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
@@ -11,7 +11,7 @@ import {ProjectMilestones,ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
-import {nextTaskDay,nextEventDay} from './nextDay';
+import {nextTaskDay,nextEventDay,nextOverdueTask} from './nextDay';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, EventItem, Goal, Kind, Page, Project, Store, Task } from './types';
 
@@ -44,7 +44,7 @@ function goalDirections(goal:Goal,store:Store):Store['areas']{
 }
 
 type Scope='one'|'future'|'all';
-type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,data:Record<string,unknown>,id?:number)=>Promise<void>;remove:(kind:Kind,id:number)=>Promise<void>;
+type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,data:Record<string,unknown>,id?:number,revision?:number)=>Promise<void>;remove:(kind:Kind,id:number,revision?:number)=>Promise<void>;
  saveRecurring:(task:Task,changes:Record<string,unknown>,scope:Scope)=>Promise<void>;removeRecurring:(task:Task,scope:Scope)=>Promise<void>;
  reload:()=>Promise<void>;unschedule:(task:Task)=>Promise<void>};
 function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,reload,unschedule}:DrawerProps){
@@ -85,7 +85,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   e.preventDefault();
   if(preventSave){setError('Заполните обязательные поля задачи и проверьте длительность.');return;}
   setBusy(true);setError('');
-  const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;delete payload.occurrence_date;
+  const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;delete payload.occurrence_date;delete payload.revision;
   if(kind==='tasks'){
     Object.assign(payload,priorityFlags(Number(payload.priority??4)));
     payload.color=taskColor(String(payload.color??DEFAULT_TASK_COLOR));
@@ -95,7 +95,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     if(instance){
       const changed=Object.fromEntries(Object.entries(payload).filter(([key,value])=>value!==(record as unknown as Record<string,unknown>)[key]));
       await saveRecurring(instance,changed,scope);
-    }else await save(kind,payload,record?.id);
+    }else await save(kind,payload,record?.id,record?.revision);
     close();
   }catch(err){setError(err instanceof Error?err.message:String(err))}finally{setBusy(false)}
  }
@@ -104,7 +104,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   setBusy(true);
   try{
     if(instance)await removeRecurring(instance,scope);
-    else await remove(kind,record.id);
+    else await remove(kind,record.id,record.revision);
     close();
   }catch(err){setError(String(err));setBusy(false)}
  }
@@ -294,14 +294,22 @@ export default function App(){
  const [backlogOpen,setBacklogOpen]=useState(true);
  const load=async()=>setData(await api.load());
  useEffect(()=>{load().catch(e=>setError(String(e))).finally(()=>setLoading(false))},[]);
- const save=async(kind:Kind,payload:Record<string,unknown>,id?:number)=>{await api.save(kind,payload,id);await load()};
+ useEffect(()=>{
+   if(!isDemo)return;
+   const sync=(event:StorageEvent)=>{
+     if(event.key==='personalmanagement:pages-demo:v1')void load().catch(e=>setError(String(e)));
+   };
+   window.addEventListener('storage',sync);
+   return ()=>window.removeEventListener('storage',sync);
+ },[]);
+ const save=async(kind:Kind,payload:Record<string,unknown>,id?:number,revision?:number)=>{await api.save(kind,payload,id,revision);await load()};
  const saveRecurring=async(task:Task,changes:Record<string,unknown>,scope:Scope)=>{
-   if(!task.occurrence_date){await save('tasks',changes,task.id);return;}
-   if(scope==='one')await api.saveOccurrence(task.id,task.occurrence_date,changes);
+   if(!task.occurrence_date){await save('tasks',changes,task.id,task.revision);return;}
+   if(scope==='one')await api.saveOccurrence(task.id,task.occurrence_date,changes,task.revision);
    if(scope==='future'){
      const master=data.tasks.find(x=>x.id===task.id)!;
-     if(task.occurrence_date===master.scheduled_at?.slice(0,10))await api.save('tasks',changes,task.id);
-     else await api.splitSeries(task.id,task.occurrence_date,changes);
+     if(task.occurrence_date===master.scheduled_at?.slice(0,10))await api.save('tasks',changes,task.id,task.revision);
+     else await api.splitSeries(task.id,task.occurrence_date,changes,task.revision);
    }
    if(scope==='all'){
      const delta={...changes};
@@ -309,32 +317,33 @@ export default function App(){
        const master=data.tasks.find(x=>x.id===task.id)!;
        delta.scheduled_at=transferSeriesStart(master,task.occurrence_date,delta.scheduled_at);
      }
-     await api.save('tasks',delta,task.id);
+     await api.save('tasks',delta,task.id,task.revision);
    }
    await load();
  };
  const removeRecurring=async(task:Task,scope:Scope)=>{
-   if(!task.occurrence_date){await remove('tasks',task.id);return;}
-   if(scope==='one')await api.saveOccurrence(task.id,task.occurrence_date,{status:'cancelled'});
-   if(scope==='future')await api.save('tasks',{recurrence_until:beforeDate(task.occurrence_date)},task.id);
-   if(scope==='all')await api.remove('tasks',task.id);
+   if(!task.occurrence_date){await remove('tasks',task.id,task.revision);return;}
+   if(scope==='one')await api.saveOccurrence(task.id,task.occurrence_date,{status:'cancelled'},task.revision);
+   if(scope==='future')await api.save('tasks',{recurrence_until:beforeDate(task.occurrence_date)},task.id,task.revision);
+   if(scope==='all')await api.remove('tasks',task.id,task.revision);
    await load();
  };
  const moveOrResizeTask=async(task:Task,changes:Record<string,unknown>)=>{
    try{
      if(task.occurrence_date)await saveRecurring(task,changes,'one');
-     else await save('tasks',changes,task.id);
+     else await save('tasks',changes,task.id,task.revision);
    }catch(e){setError(e instanceof Error?e.message:String(e));throw e}
  };
  const unschedule=async(t:Task)=>{
    if(t.recurrence)throw Error('Повторяющуюся задачу нельзя снять с расписания целиком: измените правило серии.');
-   await save('tasks',{scheduled_at:null,status:'inbox'},t.id);
+   await save('tasks',{scheduled_at:null,status:'inbox'},t.id,t.revision);
  };
  const tomorrowTask=async(t:Task)=>{
    await moveOrResizeTask(t,nextTaskDay(t));
  };
+ const tomorrowOverdue=async(t:Task)=>await moveOrResizeTask(t,nextOverdueTask(t,selectedDay));
  const tomorrowEvent=async(event:EventItem)=>{
-   await save('events',nextEventDay(event),event.id);
+   await save('events',nextEventDay(event),event.id,event.revision);
  };
  const quickCapture=async(e:FormEvent)=>{
    e.preventDefault();
@@ -345,11 +354,11 @@ export default function App(){
    catch(err){setError(err instanceof Error?err.message:String(err))}
    finally{setQuickBusy(false)}
  };
- const remove=async(kind:Kind,id:number)=>{await api.remove(kind,id);await load()};
+ const remove=async(kind:Kind,id:number,revision?:number)=>{await api.remove(kind,id,revision);await load()};
  const toggle=async(t:Task)=>{
   try{
     if(t.occurrence_date)await saveRecurring(t,{status:t.status==='done'?'planned':'done'},'one');
-    else await save('tasks',{status:t.status==='done'?'planned':'done'},t.id);
+    else await save('tasks',{status:t.status==='done'?'planned':'done'},t.id,t.revision);
   }catch(e){setError(String(e))}
  };
  const open=(kind:Kind,defaults:Record<string,unknown>={})=>{
@@ -367,7 +376,7 @@ export default function App(){
  const dayEvents=data.events.filter(e=>e.starts_at.startsWith(selectedDay));
  const dayMinutes=selectedTasks.reduce((sum,t)=>sum+t.duration_minutes,0)+
    dayEvents.reduce((sum,e)=>sum+Math.max(0,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),0);
- const lateTasks=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<selectedDay&&!selectedTasks.some(x=>x.id===t.id));
+ const lateTasks=active.filter(t=>!t.recurrence&&t.due_at&&t.due_at.slice(0,10)<selectedDay&&!selectedTasks.some(x=>x.id===t.id));
  const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
@@ -453,7 +462,7 @@ export default function App(){
      </div>
      {lateTasks.length>0&&<details className="late-tasks"><summary>Просроченные · {lateTasks.length}</summary>
        {lateTasks.slice(0,5).map(t=><div key={t.id}><span>{t.title}</span>
-         <button onClick={()=>void tomorrowTask(t).catch(e=>setError(String(e)))}>На завтра</button></div>)}
+         <button onClick={()=>void tomorrowOverdue(t).catch(e=>setError(String(e)))}>На завтра</button></div>)}
      </details>}
      <h3>Задачи</h3>
      <div className="day-plan-task-list">{selectedTasks.map(t=><div key={t.id+'-'+t.occurrence_date} className="day-plan-task">
