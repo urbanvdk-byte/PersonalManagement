@@ -5,6 +5,7 @@ import './style.css';
 import './demo-banner.css';
 import './theme.css';
 import './light-theme.css';
+import './offline.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
 
 // Cached app shell can reopen without a network after its first successful visit.
