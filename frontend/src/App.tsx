@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FolderKanban, Inbox, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, Wifi, WifiOff, RefreshCw, AlertTriangle, FolderKanban, Inbox, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
 import { api,isDemo } from './api';
+import type {OfflineStatus} from './offline';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import MiniMonth from './MiniMonth';
 import CalendarWeek from './CalendarWeek';
@@ -292,6 +293,7 @@ export default function App(){
  const [quickTitle,setQuickTitle]=useState('');
  const [quickBusy,setQuickBusy]=useState(false);
  const [backlogOpen,setBacklogOpen]=useState(true);
+ const [offlineStatus,setOfflineStatus]=useState<OfflineStatus>({mode:'ready',pending:0,message:'',lastSync:null});
  const load=async()=>setData(await api.load());
  useEffect(()=>{load().catch(e=>setError(String(e))).finally(()=>setLoading(false))},[]);
  useEffect(()=>{
@@ -301,6 +303,18 @@ export default function App(){
    };
    window.addEventListener('storage',sync);
    return ()=>window.removeEventListener('storage',sync);
+ },[]);
+ useEffect(()=>{
+  if(isDemo)return;
+  const status=(event:Event)=>setOfflineStatus((event as CustomEvent<OfflineStatus>).detail);
+  const refresh=()=>void load().catch(e=>setError(String(e)));
+  window.addEventListener('personalmanagement:offline-status',status);
+  window.addEventListener('personalmanagement:offline-change',refresh);
+  void api.offline.status().then(setOfflineStatus).catch(e=>setError(String(e)));
+  return ()=>{
+   window.removeEventListener('personalmanagement:offline-status',status);
+   window.removeEventListener('personalmanagement:offline-change',refresh);
+  };
  },[]);
  const save=async(kind:Kind,payload:Record<string,unknown>,id?:number,revision?:number)=>{await api.save(kind,payload,id,revision);await load()};
  const saveRecurring=async(task:Task,changes:Record<string,unknown>,scope:Scope)=>{
@@ -418,6 +432,32 @@ export default function App(){
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
    </header>
+   {!isDemo&&<section className={'offline-notice offline-'+offlineStatus.mode} role="status" aria-label="Состояние синхронизации">
+    <div className="offline-notice-main">
+     {offlineStatus.mode==='offline'?<WifiOff size={17}/>:
+      offlineStatus.mode==='syncing'?<RefreshCw size={17}/>:
+      offlineStatus.mode==='ready'?<Wifi size={17}/>:<AlertTriangle size={17}/>}
+     <div><strong>{offlineStatus.mode==='offline'?'Без интернета':
+      offlineStatus.mode==='syncing'?'Синхронизация':
+      offlineStatus.mode==='conflict'?'Конфликт изменений':
+      offlineStatus.mode==='auth'?'Проверьте авторизацию':
+      offlineStatus.mode==='error'?'Ошибка синхронизации':'Данные синхронизированы'}</strong>
+      <small>{offlineStatus.pending?offlineStatus.pending+' изменений ожидают отправки':
+       offlineStatus.mode==='offline'?'Работаем с копией на устройстве':'Все изменения на сервере'}</small>
+      {offlineStatus.message&&offlineStatus.mode!=='ready'&&<small>{offlineStatus.message}</small>}
+     </div>
+    </div>
+    <div className="offline-notice-actions">
+     {offlineStatus.mode==='conflict'&&<button type="button" onClick={()=>
+      void api.offline.keepLocalConflict().catch(e=>setError(String(e)))}>Оставить мои изменения</button>}
+     {offlineStatus.mode==='conflict'&&<button type="button" onClick={()=>{
+      if(window.confirm('Отменить ВСЕ изменения, не переданные на сервер? Сначала выгрузите локальные данные JSON.'))
+       void api.offline.discardAllPending().catch(e=>setError(String(e)));
+     }}>Отменить локальные изменения</button>}
+     {offlineStatus.pending>0&&<button type="button" disabled={offlineStatus.mode==='offline'||offlineStatus.mode==='syncing'}
+      onClick={()=>void api.offline.syncNow().catch(e=>setError(String(e)))}>Повторить синхронизацию</button>}
+    </div>
+   </section>}
    <section className="overview-strip" aria-label="Краткий обзор">
     <div className="overview-card"><div className="overview-symbol"><ListTodo size={18}/></div><div><small>В работе</small><strong>{active.length} <span>задач</span></strong></div></div>
     <div className="overview-card"><div className="overview-symbol"><FolderKanban size={18}/></div><div><small>Активных проектов</small><strong>{data.projects.filter(p=>p.status==='active').length} <span>проектов</span></strong></div></div>
