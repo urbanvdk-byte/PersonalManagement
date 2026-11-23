@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
+import time
 import json
 import os
 import re
@@ -101,6 +103,12 @@ CREATE TABLE IF NOT EXISTS telegram_sent (
   message_key TEXT PRIMARY KEY,
   sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS auth_rate_limits (
+  client_key TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0,
+  window_started INTEGER NOT NULL,
+  blocked_until INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
@@ -133,6 +141,10 @@ TASK_COLORS = {"#3466d9", "#16a2dc", "#12aaa1", "#39aa6f", "#e4b636", "#ff963b",
 DATETIME_KEYS = {"scheduled_at", "due_at", "starts_at", "ends_at"}
 DATE_KEYS = {"start_date", "due_date", "period_start", "period_end", "recurrence_until"}
 ID_KEYS = {"area_id", "project_id", "goal_id", "parent_id"}
+AUTH_MAX_FAILURES = 5
+AUTH_WINDOW_SECONDS = 900
+AUTH_LOCK_SECONDS = 900
+CONFLICT_MESSAGE = "Запись изменена в другой вкладке или на другом устройстве. Обновите данные перед повторным сохранением."
 
 def db_path() -> Path:
     return Path(os.environ.get("DATABASE_PATH", "/app/data/personalmanagement.db"))
@@ -181,6 +193,11 @@ def setup() -> None:
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        # Add version counters without touching existing personal records.
+        for table in (*FIELDS, "task_checklist", "project_milestones"):
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if "revision" not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
         # Preserve the former project's single area association.
         conn.execute("""INSERT OR IGNORE INTO project_areas(project_id,area_id)
                         SELECT id,area_id FROM projects WHERE area_id IS NOT NULL""")
@@ -189,10 +206,54 @@ def setup() -> None:
 def startup() -> None:
     setup()
 
+def auth_client_key(request: Request) -> str:
+    # Trust only request.client.host, not a visitor-supplied forwarded header.
+    # Deployments behind reverse proxies must configure Uvicorn trusted proxies.
+    host = request.client.host if request.client else "unknown"
+    return hashlib.sha256(host.encode("utf-8")).hexdigest()
+
+
+def auth_wait_seconds(key: str) -> int:
+    now = int(time.time())
+    with connection() as conn:
+        row = conn.execute("SELECT blocked_until FROM auth_rate_limits WHERE client_key=?", (key,)).fetchone()
+    return max(0, int(row["blocked_until"]) - now) if row else 0
+
+
+def auth_register_failure(key: str) -> int:
+    now = int(time.time())
+    with connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT failures,window_started,blocked_until FROM auth_rate_limits WHERE client_key=?",
+            (key,),
+        ).fetchone()
+        if row and row["blocked_until"] > now:
+            return row["blocked_until"] - now
+        if row and now - row["window_started"] < AUTH_WINDOW_SECONDS:
+            failures, started = row["failures"] + 1, row["window_started"]
+        else:
+            failures, started = 1, now
+        blocked_until = now + AUTH_LOCK_SECONDS if failures >= AUTH_MAX_FAILURES else 0
+        conn.execute(
+            """INSERT INTO auth_rate_limits(client_key,failures,window_started,blocked_until)
+               VALUES (?,?,?,?) ON CONFLICT(client_key) DO UPDATE SET
+               failures=excluded.failures,window_started=excluded.window_started,
+               blocked_until=excluded.blocked_until""",
+            (key, failures, started, blocked_until),
+        )
+        conn.execute("DELETE FROM auth_rate_limits WHERE window_started < ?", (now - 86400,))
+        return max(0, blocked_until - now)
+
+
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
     if request.url.path == "/api/health":
         return await call_next(request)
+    key = auth_client_key(request)
+    retry = auth_wait_seconds(key)
+    if retry:
+        return Response(status_code=429, headers={"Retry-After": str(retry), "Cache-Control": "no-store"})
     raw = request.headers.get("authorization", "")
     username = os.environ.get("APP_USERNAME", "owner")
     password = os.environ.get("APP_PASSWORD", "")
@@ -205,8 +266,22 @@ async def authenticate(request: Request, call_next):
         except (ValueError, UnicodeDecodeError):
             pass
     if not valid:
+        retry = auth_register_failure(key)
+        if retry:
+            return Response(status_code=429, headers={"Retry-After": str(retry), "Cache-Control": "no-store"})
         return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="PersonalManagement"', "Cache-Control": "no-store"})
+    with connection() as conn:
+        conn.execute("DELETE FROM auth_rate_limits WHERE client_key=?", (key,))
     return await call_next(request)
+
+
+def require_current_revision(request: Request, row: dict) -> None:
+    # Older API clients without If-Match remain compatible during migration.
+    # The first-party web interface supplies If-Match for every edit.
+    expected = request.headers.get("if-match")
+    if expected is not None and expected.strip('"') != str(row["revision"]):
+        raise HTTPException(409, CONFLICT_MESSAGE)
+
 
 def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict[str, Any]:
     if kind not in FIELDS:
@@ -285,9 +360,17 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
             raise HTTPException(422, "Для повторяющейся задачи нужно назначить дату и время")
     if kind == "events" and creating and (not payload.get("starts_at") or not payload.get("ends_at")):
         raise HTTPException(422, "Нужно указать начало и окончание события")
-    if kind == "events" and payload.get("starts_at") and payload.get("ends_at") and payload["starts_at"] >= payload["ends_at"]:
-        raise HTTPException(422, "Окончание должно быть позднее начала")
+    if kind == "events" and payload.get("starts_at") and payload.get("ends_at"):
+        validate_event_interval(payload["starts_at"], payload["ends_at"])
     return payload
+
+def validate_event_interval(starts_at: str, ends_at: str) -> None:
+    try:
+        if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(422, "Окончание должно быть позднее начала")
+
 
 def project_with_areas(conn:sqlite3.Connection,row:dict):
     row["area_ids"]=[r["area_id"] for r in conn.execute(
@@ -353,21 +436,28 @@ def create(kind: str, payload: dict[str, Any]):
         return fetch_one(conn, kind, cursor.lastrowid)
 
 @app.patch("/api/{kind}/{item_id}")
-def update(kind: str, item_id: int, payload: dict[str, Any]):
+def update(kind: str, item_id: int, payload: dict[str, Any], request: Request):
     values = validate(kind, payload.copy())
     areas=values.pop("area_ids",None) if kind=="projects" else None
     if kind=="projects" and areas is not None:
         values["area_id"]=areas[0] if areas else None
     with connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         previous=fetch_one(conn,kind,item_id)
+        require_current_revision(request,previous)
         if kind=="tasks":validate_task_schedule(conn,values,previous)
+        if kind=="events":
+            merged={**previous,**values}
+            validate_event_interval(merged["starts_at"],merged["ends_at"])
         if values or areas is not None:
             if kind == "tasks":
                 values["updated_at"] = datetime.now().isoformat(timespec="seconds")
             try:
                 if values:
                     assignments = ", ".join(f"{col} = ?" for col in values)
-                    conn.execute(f"UPDATE {kind} SET {assignments} WHERE id = ?", (*values.values(), item_id))
+                    conn.execute(f"UPDATE {kind} SET {assignments}, revision=revision+1 WHERE id = ?", (*values.values(), item_id))
+                elif areas is not None:
+                    conn.execute("UPDATE projects SET revision=revision+1 WHERE id=?",(item_id,))
                 if kind=="projects" and (areas is not None or "area_id" in values):
                     selected=areas if areas is not None else ([values["area_id"]] if values.get("area_id") else [])
                     conn.execute("DELETE FROM project_areas WHERE project_id=?",(item_id,))
@@ -380,11 +470,13 @@ def update(kind: str, item_id: int, payload: dict[str, Any]):
         return fetch_one(conn, kind, item_id)
 
 @app.delete("/api/{kind}/{item_id}", status_code=204)
-def delete(kind: str, item_id: int):
+def delete(kind: str, item_id: int, request: Request):
     if kind not in FIELDS:
         raise HTTPException(404, "Неизвестный тип записи")
     with connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         previous=fetch_one(conn, kind, item_id)
+        require_current_revision(request,previous)
         conn.execute(f"DELETE FROM {kind} WHERE id = ?", (item_id,))
         if kind!="projects":
             record_activity(conn,previous.get("project_id"),"Удалено: "+previous["title"])
@@ -422,13 +514,15 @@ def series_task(conn:sqlite3.Connection, task_id:int, day:str):
     return task
 
 @app.put("/api/task-occurrences/{task_id}/{day}")
-def put_occurrence(task_id:int,day:str,payload:dict[str,Any]):
+def put_occurrence(task_id:int,day:str,payload:dict[str,Any],request:Request):
     raw=payload.get("changes")
     if not isinstance(raw,dict) or set(payload)!={"changes"} or set(raw)-OCCURRENCE_FIELDS:
         raise HTTPException(422,"Некорректные изменения повторения")
     changes=validate("tasks",raw.copy())
     with connection() as conn:
-        series_task(conn,task_id,day)
+        conn.execute("BEGIN IMMEDIATE")
+        task=series_task(conn,task_id,day)
+        require_current_revision(request,task)
         # Merge sparse changes, preventing a second edit from losing an earlier one.
         previous=conn.execute("SELECT changes FROM task_occurrences WHERE task_id=? AND occurrence_date=?",
                               (task_id,day)).fetchone()
@@ -437,17 +531,21 @@ def put_occurrence(task_id:int,day:str,payload:dict[str,Any]):
                         VALUES (?,?,?) ON CONFLICT(task_id,occurrence_date)
                         DO UPDATE SET changes=excluded.changes""",
                      (task_id,day,json.dumps(combined,ensure_ascii=False)))
+        conn.execute("UPDATE tasks SET revision=revision+1 WHERE id=?",(task_id,))
         return {"task_id":task_id,"occurrence_date":day,"changes":combined}
 
 @app.delete("/api/task-occurrences/{task_id}/{day}",status_code=204)
-def reset_occurrence(task_id:int,day:str):
+def reset_occurrence(task_id:int,day:str,request:Request):
     with connection() as conn:
-        series_task(conn,task_id,day)
+        conn.execute("BEGIN IMMEDIATE")
+        task=series_task(conn,task_id,day)
+        require_current_revision(request,task)
         conn.execute("DELETE FROM task_occurrences WHERE task_id=? AND occurrence_date=?",(task_id,day))
+        conn.execute("UPDATE tasks SET revision=revision+1 WHERE id=?",(task_id,))
     return Response(status_code=204)
 
 @app.post("/api/task-series/{task_id}/split",status_code=201)
-def split_series(task_id:int,payload:dict[str,Any]):
+def split_series(task_id:int,payload:dict[str,Any],request:Request):
     day=payload.get("occurrence_date")
     raw=payload.get("changes",{})
     if not isinstance(day,str) or not isinstance(raw,dict) or set(payload)-{"occurrence_date","changes"}:
@@ -458,7 +556,9 @@ def split_series(task_id:int,payload:dict[str,Any]):
     if "recurrence_until" in changes and changes["recurrence_until"] and changes["recurrence_until"]<day:
         raise HTTPException(422,"Окончание серии раньше начала")
     with connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         original=series_task(conn,task_id,day)
+        require_current_revision(request,original)
         if day==original["scheduled_at"][:10]:
             raise HTTPException(422,"Для первого повторения редактируйте всю серию")
         current=conn.execute("SELECT changes FROM task_occurrences WHERE task_id=? AND occurrence_date=?",
@@ -478,7 +578,7 @@ def split_series(task_id:int,payload:dict[str,Any]):
             cur=conn.execute(f"INSERT INTO tasks ({cols}) VALUES ({values})",tuple(fields.values()))
             new_id=cur.lastrowid
             stop=(date.fromisoformat(day)-__import__("datetime").timedelta(days=1)).isoformat()
-            conn.execute("UPDATE tasks SET recurrence_until=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            conn.execute("UPDATE tasks SET recurrence_until=?,updated_at=CURRENT_TIMESTAMP,revision=revision+1 WHERE id=?",
                          (stop,task_id))
             conn.execute("""UPDATE task_occurrences SET task_id=?
                             WHERE task_id=? AND occurrence_date>=?""",
@@ -517,22 +617,26 @@ def add_checklist(task_id:int,payload:dict[str,Any]):
         return dict(conn.execute("SELECT * FROM task_checklist WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.patch("/api/tasks/{task_id}/checklist/{item_id}")
-def edit_checklist(task_id:int,item_id:int,payload:dict[str,Any]):
+def edit_checklist(task_id:int,item_id:int,payload:dict[str,Any],request:Request):
     if not payload or set(payload)-{"title","done"}:raise HTTPException(422,"Некорректные поля пункта")
     values={k:(valid_title(v) if k=="title" else validate_done(v)) for k,v in payload.items()}
     with connection() as conn:
         task=fetch_one(conn,"tasks",task_id)
+        conn.execute("BEGIN IMMEDIATE")
         prev=owned(conn,"task_checklist",item_id,"task_id",task_id)
-        conn.execute("UPDATE task_checklist SET "+",".join(f"{k}=?" for k in values)+" WHERE id=?",
+        require_current_revision(request,prev)
+        conn.execute("UPDATE task_checklist SET "+",".join(f"{k}=?" for k in values)+",revision=revision+1 WHERE id=?",
                      (*values.values(),item_id))
         record_activity(conn,task["project_id"],("✓ " if values.get("done")==1 else "Изменён пункт: ")+prev["title"])
         return dict(conn.execute("SELECT * FROM task_checklist WHERE id=?",(item_id,)).fetchone())
 
 @app.delete("/api/tasks/{task_id}/checklist/{item_id}",status_code=204)
-def remove_checklist(task_id:int,item_id:int):
+def remove_checklist(task_id:int,item_id:int,request:Request):
     with connection() as conn:
         task=fetch_one(conn,"tasks",task_id)
+        conn.execute("BEGIN IMMEDIATE")
         prev=owned(conn,"task_checklist",item_id,"task_id",task_id)
+        require_current_revision(request,prev)
         conn.execute("DELETE FROM task_checklist WHERE id=?",(item_id,))
         record_activity(conn,task["project_id"],"Удалён пункт: "+prev["title"])
     return Response(status_code=204)
@@ -554,7 +658,7 @@ def add_milestone(project_id:int,payload:dict[str,Any]):
         return dict(conn.execute("SELECT * FROM project_milestones WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.patch("/api/projects/{project_id}/milestones/{item_id}")
-def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any]):
+def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any],request:Request):
     if not payload or set(payload)-{"title","due_date","done"}:raise HTTPException(422,"Некорректные поля этапа")
     values={}
     for key,value in payload.items():
@@ -568,17 +672,21 @@ def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any]):
             values[key]=value
     with connection() as conn:
         fetch_one(conn,"projects",project_id)
+        conn.execute("BEGIN IMMEDIATE")
         prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
-        conn.execute("UPDATE project_milestones SET "+",".join(f"{k}=?" for k in values)+" WHERE id=?",
+        require_current_revision(request,prev)
+        conn.execute("UPDATE project_milestones SET "+",".join(f"{k}=?" for k in values)+",revision=revision+1 WHERE id=?",
                      (*values.values(),item_id))
         record_activity(conn,project_id,("Этап выполнен: " if values.get("done")==1 else "Этап изменён: ")+prev["title"])
         return dict(conn.execute("SELECT * FROM project_milestones WHERE id=?",(item_id,)).fetchone())
 
 @app.delete("/api/projects/{project_id}/milestones/{item_id}",status_code=204)
-def remove_milestone(project_id:int,item_id:int):
+def remove_milestone(project_id:int,item_id:int,request:Request):
     with connection() as conn:
         fetch_one(conn,"projects",project_id)
+        conn.execute("BEGIN IMMEDIATE")
         prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
+        require_current_revision(request,prev)
         conn.execute("DELETE FROM project_milestones WHERE id=?",(item_id,))
         record_activity(conn,project_id,"Этап удалён: "+prev["title"])
     return Response(status_code=204)

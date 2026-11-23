@@ -261,3 +261,64 @@ def test_project_milestones_checklist_activity_and_cascade(tmp_path,monkeypatch)
         data=client.get("/api/bootstrap",headers=auth()).json()
         assert not any(a["project_id"]==project["id"] for a in data["activity"])
         assert not any(m["project_id"]==project["id"] for m in data["milestones"])
+
+
+def test_partial_event_update_rejects_invalid_interval(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"event-update.db"))
+    with TestClient(app) as client:
+        event=client.post("/api/events",headers=auth(),json={
+            "title":"Встреча","starts_at":"2026-11-23T10:00","ends_at":"2026-11-23T11:00"
+        }).json()
+        address=f'/api/events/{event["id"]}'
+        assert client.patch(address,headers=auth(),json={"starts_at":"2026-11-23T12:00"}).status_code==422
+        assert client.patch(address,headers=auth(),json={"ends_at":"2026-11-23T09:00"}).status_code==422
+        assert client.patch(address,headers=auth(),json={"starts_at":"2026-11-23T09:30"}).status_code==200
+        remaining=client.get("/api/bootstrap",headers=auth()).json()["events"][0]
+        assert remaining["starts_at"]=="2026-11-23T09:30" and remaining["ends_at"]=="2026-11-23T11:00"
+
+
+def test_concurrent_tab_revision_rejects_stale_edits_and_delete(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"revisions.db"))
+    with TestClient(app) as client:
+        task=client.post("/api/tasks",headers=auth(),json={"title":"До изменения"}).json()
+        assert task["revision"]==1
+        path=f'/api/tasks/{task["id"]}'
+        first={**auth(),"If-Match":str(task["revision"])}
+        updated=client.patch(path,headers=first,json={"title":"Первая вкладка"}).json()
+        assert updated["revision"]==2
+        assert client.patch(path,headers=first,json={"title":"Вторая вкладка"}).status_code==409
+        assert client.delete(path,headers=first).status_code==409
+        assert client.get("/api/bootstrap",headers=auth()).json()["tasks"][0]["title"]=="Первая вкладка"
+        assert client.delete(path,headers={**auth(),"If-Match":"2"}).status_code==204
+
+
+def test_recurrence_override_advances_master_revision(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"occ-revisions.db"))
+    with TestClient(app) as client:
+        task=client.post("/api/tasks",headers=auth(),json={
+            "title":"Повтор","scheduled_at":"2026-11-23T09:00","recurrence":"daily"
+        }).json()
+        path=f'/api/task-occurrences/{task["id"]}/2026-11-24'
+        first={**auth(),"If-Match":str(task["revision"])}
+        assert client.put(path,headers=first,json={"changes":{"status":"done"}}).status_code==200
+        assert client.put(path,headers=first,json={"changes":{"title":"Потерянное изменение"}}).status_code==409
+        changed=client.get("/api/bootstrap",headers=auth()).json()["tasks"][0]
+        assert changed["revision"]==2
+
+
+def test_basic_password_lockout_ignores_spoofed_forwarded_ip(tmp_path,monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"auth.db"))
+    bad={"Authorization":"Basic "+base64.b64encode(b"owner:wrong").decode()}
+    with TestClient(app) as client:
+        for attempt in range(4):
+            response=client.get("/api/bootstrap",headers={**bad,"X-Forwarded-For":f"10.3.2.{attempt}"})
+            assert response.status_code==401
+        locked=client.get("/api/bootstrap",headers={**bad,"X-Forwarded-For":"10.9.9.9"})
+        assert locked.status_code==429
+        assert int(locked.headers["Retry-After"])>0
+        assert client.get("/api/bootstrap",headers=auth()).status_code==429
+        assert client.get("/api/health").status_code==200
