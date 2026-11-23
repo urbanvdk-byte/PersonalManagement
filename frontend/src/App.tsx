@@ -450,7 +450,7 @@ export default function App(){
     <div className="offline-notice-actions">
      {offlineStatus.mode==='conflict'&&<button type="button" onClick={()=>
       void api.offline.keepLocalConflict().catch(e=>setError(String(e)))}>Оставить мои изменения</button>}
-     {offlineStatus.mode==='conflict'&&<button type="button" onClick={()=>{
+     {(offlineStatus.mode==='conflict'||offlineStatus.mode==='error')&&<button type="button" onClick={()=>{
       if(window.confirm('Отменить ВСЕ изменения, не переданные на сервер? Сначала выгрузите локальные данные JSON.'))
        void api.offline.discardAllPending().catch(e=>setError(String(e)));
      }}>Отменить локальные изменения</button>}
