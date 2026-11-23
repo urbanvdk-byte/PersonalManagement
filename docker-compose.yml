@@ -7,14 +7,10 @@ services:
     environment:
       APP_USERNAME: "${APP_USERNAME:-owner}"
       APP_PASSWORD: "${APP_PASSWORD:?Set APP_PASSWORD in .env}"
-      DATABASE_PATH: /app/data/personalmanagement.db
+      DATABASE_URL: "${DATABASE_URL:?Set PostgreSQL DATABASE_URL in .env}"
       PORT: "${PORT:-3000}"
-    volumes:
-      - planner-data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/health', timeout=5)"]
       interval: 30s
       timeout: 6s
       retries: 3
-volumes:
-  planner-data:

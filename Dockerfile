@@ -8,18 +8,16 @@ RUN npm run build
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     STATIC_DIR=/usr/src/personalmanagement/static \
-    DATABASE_PATH=/app/data/personalmanagement.db \
     PORT=3000
 WORKDIR /usr/src/personalmanagement
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app.py ./app.py
 COPY --from=webbuild /web/dist/ ./static/
-# Bothost can mount source files over /app; keep executable code and static
-# assets outside /app while reserving /app/data for persistent SQLite storage.
-RUN mkdir -p /app/data \
-    && useradd -r -u 10001 planner \
-    && chown -R planner:planner /usr/src/personalmanagement /app/data
+# Bothost may mount source files on /app; code stays outside this directory.
+# Database credentials arrive only through Bothost's DATABASE_URL variable.
+RUN useradd -r -u 10001 planner \
+    && chown -R planner:planner /usr/src/personalmanagement
 USER planner
 EXPOSE 3000
 CMD ["sh","-c","exec uvicorn app:app --host 0.0.0.0 --port \"${PORT:-3000}\""]
