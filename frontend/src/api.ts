@@ -8,6 +8,12 @@ import {isOccurrenceDate,beforeDate} from './recurrence';
 // The production build keeps using the FastAPI + SQLite endpoints unchanged.
 export const isDemo = import.meta.env.VITE_DEMO_MODE === 'true';
 const STORAGE_KEY = 'personalmanagement:pages-demo:v1';
+export const STALE_RECORD_ERROR = 'Запись изменена в другой вкладке. Обновите данные перед повторным сохранением.';
+const versionHeaders=(revision?:number):Record<string,string> =>
+  revision===undefined?{}:{'If-Match':String(revision)};
+const checkRevision=(current:number|undefined,expected?:number)=>{
+  if(expected!==undefined&&(current??1)!==expected)throw Error(STALE_RECORD_ERROR);
+};
 
 async function request<T>(url:string, init?:RequestInit):Promise<T>{
   const r=await fetch(url,{...init,headers:{'Content-Type':'application/json',...(init?.headers||{})},cache:'no-store'});
@@ -65,6 +71,10 @@ function loadDemo():Store{
         for(const project of data.projects){
           if(!Array.isArray(project.area_ids))project.area_ids=project.area_id?[project.area_id]:[];
         }
+        for(const kind of ['areas','projects','goals','tasks','events'] as Kind[])
+          for(const item of data[kind])item.revision ||= 1;
+        for(const item of data.checklist||[])item.revision ||= 1;
+        for(const item of data.milestones||[])item.revision ||= 1;
         return data;
       }
       throw Error('Некорректный формат данных демо');
@@ -85,7 +95,7 @@ const defaults:Record<Kind,Row>={
   tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:DEFAULT_TASK_COLOR},
   events:{area_id:null,project_id:null,notes:'',color:'#f3bb28'}
 };
-async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
+async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number):Promise<void>{
   if('title' in values&&(!String(values.title||'').trim()))throw Error('Укажите название');
   if(kind==='projects' && values.area_ids!==undefined){
     if(!Array.isArray(values.area_ids)||values.area_ids.length>100||
@@ -111,6 +121,12 @@ async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
   if(id){
     const row=list.find(x=>x.id===id);
     if(!row)throw Error('Запись не найдена');
+    checkRevision(Number(row.revision)||1,expectedRevision);
+    if(kind==='events'){
+      const full={...row,...values};
+      if(!full.starts_at||!full.ends_at||String(full.starts_at)>=String(full.ends_at))
+        throw Error('Окончание события должно быть позднее начала');
+    }
     if(kind==='tasks'&&String(values.recurrence??row.recurrence??'')&&!String(values.scheduled_at??row.scheduled_at??''))
       throw Error('Для повторяющейся задачи нужна дата и время');
     Object.assign(row,values);
@@ -119,6 +135,7 @@ async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
       else if(values.area_id!==undefined)row.area_ids=values.area_id?[values.area_id]:[];
     }
     if(kind==='tasks')row.updated_at=stamp;
+    row.revision=(Number(row.revision)||1)+1;
   }else{
     if(!String(values.title||'').trim())throw Error('Укажите название');
     if(kind==='events'&&(!values.starts_at||!values.ends_at||String(values.starts_at)>=String(values.ends_at)))
@@ -128,7 +145,7 @@ async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
     if(kind==='projects'&&values.area_ids===undefined)
       values.area_ids=values.area_id?[values.area_id]:[];
     const newId=Math.max(0,...list.map(x=>Number(x.id)||0))+1;
-    list.push({...defaults[kind],...values,id:newId,created_at:stamp,...(kind==='tasks'?{updated_at:stamp}:{})});
+    list.push({...defaults[kind],...values,id:newId,created_at:stamp,revision:1,...(kind==='tasks'?{updated_at:stamp}:{})});
   }
   if(kind==='projects')writeActivity(data,id||Number((data.projects as unknown as Row[]).at(-1)?.id),"Проект: "+String(values.title||'обновлён'));
   if(kind==='tasks'||kind==='goals'||kind==='events'){
@@ -137,11 +154,12 @@ async function demoSave(kind:Kind,values:Row,id?:number):Promise<void>{
   }
   storeDemo(data);
 }
-async function demoRemove(kind:Kind,id:number):Promise<void>{
+async function demoRemove(kind:Kind,id:number,expectedRevision?:number):Promise<void>{
   const data=loadDemo();
   const list=data[kind] as unknown as Row[];
   const idx=list.findIndex(x=>x.id===id);
   if(idx<0)throw Error('Запись не найдена');
+  checkRevision(Number(list[idx].revision)||1,expectedRevision);
   list.splice(idx,1);
   if(kind==='areas'){
     data.projects.forEach(x=>{
@@ -190,14 +208,15 @@ async function resetDemo(){
 }
 
 const ALLOWED_OCCURRENCE_FIELDS=new Set(['title','notes','priority','important','urgent','status','scheduled_at','due_at','duration_minutes','color','area_id','project_id','goal_id']);
-async function saveOccurrence(taskId:number,day:string,changes:Row):Promise<void>{
+async function saveOccurrence(taskId:number,day:string,changes:Row,revision?:number):Promise<void>{
   if(!isDemo){
-    await request('/api/task-occurrences/'+taskId+'/'+day,{method:'PUT',body:JSON.stringify({changes})});
+    await request('/api/task-occurrences/'+taskId+'/'+day,{method:'PUT',headers:versionHeaders(revision),body:JSON.stringify({changes})});
     return;
   }
   const data=loadDemo();
   const task=data.tasks.find(x=>x.id===taskId);
   if(!task||!isOccurrenceDate(task,day))throw Error('Дата не относится к серии');
+  checkRevision(task.revision,revision);
   if(Object.keys(changes).some(k=>!ALLOWED_OCCURRENCE_FIELDS.has(k)))throw Error('Некорректные поля повторения');
   if(changes.scheduled_at!==undefined&&!hasScheduledTime(changes.scheduled_at))
     throw Error('Укажите дату и время');
@@ -208,31 +227,38 @@ async function saveOccurrence(taskId:number,day:string,changes:Row):Promise<void
   const index=(data.occurrences||[]).findIndex(x=>x.task_id===taskId&&x.occurrence_date===day);
   if(index>=0)data.occurrences![index].changes={...data.occurrences![index].changes,...changes};
   else (data.occurrences ||= []).push({task_id:taskId,occurrence_date:day,changes});
+  task.revision=(task.revision||1)+1;
   storeDemo(data);
 }
-async function resetOccurrence(taskId:number,day:string):Promise<void>{
-  if(!isDemo){await request<void>('/api/task-occurrences/'+taskId+'/'+day,{method:'DELETE'});return;}
+async function resetOccurrence(taskId:number,day:string,revision?:number):Promise<void>{
+  if(!isDemo){await request<void>('/api/task-occurrences/'+taskId+'/'+day,{method:'DELETE',headers:versionHeaders(revision)});return;}
   const data=loadDemo();
+  const task=data.tasks.find(x=>x.id===taskId);
+  if(!task||!isOccurrenceDate(task,day))throw Error('Дата не относится к серии');
+  checkRevision(task.revision,revision);
   data.occurrences=(data.occurrences||[]).filter(x=>!(x.task_id===taskId&&x.occurrence_date===day));
+  task.revision=(task.revision||1)+1;
   storeDemo(data);
 }
-async function splitSeries(taskId:number,day:string,changes:Row):Promise<void>{
+async function splitSeries(taskId:number,day:string,changes:Row,revision?:number):Promise<void>{
   if(!isDemo){
-    await request('/api/task-series/'+taskId+'/split',{method:'POST',body:JSON.stringify({occurrence_date:day,changes})});
+    await request('/api/task-series/'+taskId+'/split',{method:'POST',headers:versionHeaders(revision),body:JSON.stringify({occurrence_date:day,changes})});
     return;
   }
   const data=loadDemo();
   const old=data.tasks.find(x=>x.id===taskId);
   if(!old||!isOccurrenceDate(old,day))throw Error('Дата не относится к серии');
+  checkRevision(old.revision,revision);
   if(day===old.scheduled_at?.slice(0,10))throw Error('Для первого повтора измените всю серию');
   const existing=(data.occurrences||[]).find(x=>x.task_id===taskId&&x.occurrence_date===day)?.changes||{};
   const nextId=Math.max(0,...data.tasks.map(t=>t.id))+1;
-  const newTask={...old,...existing,...changes,id:nextId,
+  const newTask={...old,...existing,...changes,id:nextId,revision:1,
     scheduled_at:day+old.scheduled_at!.slice(10),created_at:new Date().toISOString(),updated_at:new Date().toISOString()};
   if(changes.scheduled_at)newTask.scheduled_at=String(changes.scheduled_at);
   if(!hasScheduledTime(newTask.scheduled_at)||!isValidTaskDuration(newTask.duration_minutes))
     throw Error('Некорректное начало новой серии');
   old.recurrence_until=beforeDate(day);
+  old.revision=(old.revision||1)+1;
   data.tasks.push(newTask);
   data.occurrences=(data.occurrences||[]).map(x=>x.task_id===taskId&&x.occurrence_date>=day?
     {...x,task_id:nextId}:x).filter(x=>!(x.task_id===nextId&&x.occurrence_date===day));
@@ -273,33 +299,36 @@ async function createExtra(kind:ExtraKind,parentId:number,details:Row):Promise<v
  }
  storeDemo(data);
 }
-async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row):Promise<void>{
+async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row,revision?:number):Promise<void>{
  if(!isDemo){
    await request('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,
-      {method:'PATCH',body:JSON.stringify(details)});
+      {method:'PATCH',headers:versionHeaders(revision),body:JSON.stringify(details)});
    return;
  }
  const data=loadDemo();
  const list=kind==='checklist'?data.checklist:data.milestones;
  const row=list?.find(item=>item.id===id&&(kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId));
  if(!row)throw Error('Элемент не найден');
+ checkRevision(row.revision,revision);
  if(details.done!==undefined&&![0,1,false,true].includes(details.done as number|boolean))throw Error('Неверный статус');
  if(details.title!==undefined&&(!String(details.title).trim()||String(details.title).length>250))throw Error('Неверное название');
  if(details.due_date!==undefined&&details.due_date!==null&&!/^\d{4}-\d{2}-\d{2}$/.test(String(details.due_date)))throw Error('Неверная дата');
  Object.assign(row,details);
+ row.revision=(row.revision||1)+1;
  const projectId=kind==='milestones'?parentId:data.tasks.find(task=>task.id===parentId)?.project_id||null;
  writeActivity(data,projectId,(details.done===1?'Выполнено: ':'Изменено: ')+row.title);
  storeDemo(data);
 }
-async function removeExtra(kind:ExtraKind,parentId:number,id:number):Promise<void>{
+async function removeExtra(kind:ExtraKind,parentId:number,id:number,revision?:number):Promise<void>{
  if(!isDemo){
-   await request<void>('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,{method:'DELETE'});
+   await request<void>('/api/'+(kind==='checklist'?'tasks':'projects')+'/'+parentId+'/'+kind+'/'+id,{method:'DELETE',headers:versionHeaders(revision)});
    return;
  }
  const data=loadDemo();
  const list=kind==='checklist'?data.checklist:data.milestones;
  const row=list?.find(item=>item.id===id&&(kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId));
  if(!row)throw Error('Элемент не найден');
+ checkRevision(row.revision,revision);
  if(kind==='checklist')data.checklist=(data.checklist||[]).filter(item=>item.id!==id);
  else data.milestones=(data.milestones||[]).filter(item=>item.id!==id);
  writeActivity(data,kind==='milestones'?parentId:data.tasks.find(task=>task.id===parentId)?.project_id||null,'Удалено: '+row.title);
@@ -308,17 +337,17 @@ async function removeExtra(kind:ExtraKind,parentId:number,id:number):Promise<voi
 
 export const api={
   load:()=>isDemo?Promise.resolve(loadDemo()):request<Store>('/api/bootstrap'),
-  save:(kind:Kind,data:Row,id?:number)=>isDemo?demoSave(kind,data,id):request('/api/'+kind+(id?'/'+id:''),{method:id?'PATCH':'POST',body:JSON.stringify(data)}),
-  remove:(kind:Kind,id:number)=>isDemo?demoRemove(kind,id):request<void>('/api/'+kind+'/'+id,{method:'DELETE'}),
+  save:(kind:Kind,data:Row,id?:number,revision?:number)=>isDemo?demoSave(kind,data,id,revision):request('/api/'+kind+(id?'/'+id:''),{method:id?'PATCH':'POST',headers:versionHeaders(revision),body:JSON.stringify(data)}),
+  remove:(kind:Kind,id:number,revision?:number)=>isDemo?demoRemove(kind,id,revision):request<void>('/api/'+kind+'/'+id,{method:'DELETE',headers:versionHeaders(revision)}),
   download,
   resetDemo,
   saveOccurrence,
   resetOccurrence,
   splitSeries,
   addChecklist:(taskId:number,title:string)=>createExtra('checklist',taskId,{title}),
-  updateChecklist:(taskId:number,id:number,changes:Row)=>updateExtra('checklist',taskId,id,changes),
-  deleteChecklist:(taskId:number,id:number)=>removeExtra('checklist',taskId,id),
+  updateChecklist:(taskId:number,id:number,changes:Row,revision?:number)=>updateExtra('checklist',taskId,id,changes,revision),
+  deleteChecklist:(taskId:number,id:number,revision?:number)=>removeExtra('checklist',taskId,id,revision),
   addMilestone:(projectId:number,title:string,due_date?:string|null)=>createExtra('milestones',projectId,{title,due_date:due_date||null}),
-  updateMilestone:(projectId:number,id:number,changes:Row)=>updateExtra('milestones',projectId,id,changes),
-  deleteMilestone:(projectId:number,id:number)=>removeExtra('milestones',projectId,id)
+  updateMilestone:(projectId:number,id:number,changes:Row,revision?:number)=>updateExtra('milestones',projectId,id,changes,revision),
+  deleteMilestone:(projectId:number,id:number,revision?:number)=>removeExtra('milestones',projectId,id,revision)
 };
