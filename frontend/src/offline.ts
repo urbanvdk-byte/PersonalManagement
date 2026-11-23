@@ -36,7 +36,7 @@ const done=(tx:IDBTransaction)=>new Promise<void>((resolve,reject)=>{
 let dbPromise:Promise<IDBDatabase>|null=null;
 function database():Promise<IDBDatabase>{
  if(!dbPromise){
-  dbPromise=new Promise((resolve,reject)=>{
+  dbPromise=new Promise<IDBDatabase>((resolve,reject)=>{
    if(!('indexedDB' in window)){reject(Error('Браузер не поддерживает IndexedDB'));return;}
    const opening=indexedDB.open(DATABASE,1);
    opening.onupgradeneeded=()=>{
@@ -52,7 +52,7 @@ function database():Promise<IDBDatabase>{
    opening.onblocked=()=>reject(Error('Закройте другие вкладки менеджера и повторите попытку'));
   }).catch(error=>{dbPromise=null;throw error});
  }
- return dbPromise;
+ return dbPromise!;
 }
 async function snapshot():Promise<Snapshot|null>{
  const db=await database();return (await req(db.transaction('meta').objectStore('meta').get('snapshot')) as Snapshot|undefined)||null;
@@ -175,6 +175,7 @@ async function replaceSnapshot(data:Store):Promise<boolean>{
    const get=meta.get('snapshot');
    get.onsuccess=()=>{
     const current=get.result as Snapshot|undefined;
+    if(current&&JSON.stringify(current.data)===JSON.stringify(data))return;
     meta.put({key:'snapshot',version:(current?.version??0)+1,data,updatedAt:Date.now()} as Snapshot);
     meta.put({key:'mappings',value:{}});eligible=true;
    };
@@ -232,7 +233,7 @@ export class OfflineEngine {
   this.started=true;
   if('BroadcastChannel' in window){
    this.channel=new BroadcastChannel('personalmanagement:offline');
-   this.channel.onmessage=()=>{emitChange();void this.count();void this.syncNow();};
+   this.channel.onmessage=()=>{emitChange();void this.count();};
   }
   window.addEventListener('online',()=>void this.syncNow());
   window.addEventListener('offline',()=>this.update('offline',networkMessage));
@@ -334,7 +335,14 @@ export class OfflineEngine {
   if(!target?.revision)throw Error('Запись удалена на сервере: необходимо разрешить конфликт вручную');
   const db=await database();
   const tx=db.transaction('queue','readwrite');
-  tx.objectStore('queue').put({...first,revision:target.revision});
+  const list=tx.objectStore('queue');
+  const future=await req(list.getAll()) as OfflineOperation[];
+  const delta=target.revision-(first.revision||1);
+  for(const operation of future){
+   if(operation.operation_id===first.operation_id)list.put({...operation,revision:target.revision});
+   else if(matching(first,operation)&&operation.revision!==undefined)
+    list.put({...operation,revision:operation.revision+delta});
+  }
   await done(tx);
   this.update('syncing','Повторяем сохранение локального варианта');
   await this.syncNow();
