@@ -1,0 +1,23 @@
+/* Small, always-visible state indicator; no separate mobile application required. */
+.offline-notice{
+ display:flex;align-items:center;justify-content:space-between;gap:12px;
+ padding:9px 18px;border-bottom:1px solid var(--border,#e3e8ef);
+ background:var(--surface,#f7f9fc);color:var(--text,#223);
+}
+.offline-notice-main{display:flex;align-items:center;gap:10px;min-width:0}
+.offline-notice-main>svg{flex-shrink:0}
+.offline-notice-main>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.offline-notice-main strong{font-size:12px}
+.offline-notice-main small{font-size:11px;line-height:1.4;opacity:.85;overflow-wrap:anywhere}
+.offline-ready .offline-notice-main>svg{color:#1a9564}
+.offline-offline .offline-notice-main>svg{color:#e4a223}
+.offline-syncing .offline-notice-main>svg{color:#247ce1;animation:offline-spin 1.7s linear infinite}
+.offline-conflict .offline-notice-main>svg,.offline-error .offline-notice-main>svg,.offline-auth .offline-notice-main>svg{color:#d75d38}
+.offline-notice-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.offline-notice-actions button{padding:5px 10px;border:1px solid #abb9c9;border-radius:7px;background:transparent;color:inherit;cursor:pointer;font-size:11px}
+.offline-notice-actions button:disabled{opacity:.45;cursor:default}
+@keyframes offline-spin{to{transform:rotate(360deg)}}
+@media(max-width:680px){
+ .offline-notice{padding:8px 12px;align-items:flex-start;flex-direction:column}
+ .offline-notice-actions{justify-content:flex-start}
+}
