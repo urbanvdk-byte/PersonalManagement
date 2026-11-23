@@ -74,3 +74,25 @@ test('offline project and its task keep their relationship during ID remapping',
  expect(linked).toHaveLength(1);
  expect(linked[0].project_id).toBe(found[0].id);
 });
+
+
+test('approved branding assets load, hide on mobile, and define home-screen icon',async({page})=>{
+ await page.goto('/');
+ const logo=page.locator('.pm-sidebar-logo img');
+ await expect(logo).toBeVisible();
+ await expect.poll(()=>logo.evaluate((node:HTMLImageElement)=>node.naturalWidth)).toBe(192);
+ const html=await page.locator('head').innerHTML();
+ expect(html).toContain('favicon-32.png');
+ expect(html).toContain('manifest.webmanifest');
+ const manifest=await page.evaluate(async()=>{
+  const url=document.querySelector<HTMLLinkElement>('link[rel="manifest"]')?.href;
+  if(!url)throw Error('Missing app manifest');
+  const response=await fetch(url);
+  if(!response.ok)throw Error('Manifest not served');
+  return await response.json() as {display:string;icons:Array<{src:string;sizes:string}>};
+ });
+ expect(manifest.display).toBe('standalone');
+ expect(manifest.icons.some(item=>item.src.includes('brand-icon-192.png')&&item.sizes==='192x192')).toBe(true);
+ await page.setViewportSize({width:390,height:844});
+ await expect(logo).toBeHidden();
+});
