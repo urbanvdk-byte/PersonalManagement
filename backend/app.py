@@ -9,7 +9,9 @@ import json
 import os
 import re
 import sqlite3
+import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -109,6 +111,12 @@ CREATE TABLE IF NOT EXISTS auth_rate_limits (
   window_started INTEGER NOT NULL,
   blocked_until INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS offline_operation_receipts (
+  operation_id TEXT PRIMARY KEY,
+  request_hash TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
@@ -149,8 +157,24 @@ CONFLICT_MESSAGE = "Запись изменена в другой вкладке
 def db_path() -> Path:
     return Path(os.environ.get("DATABASE_PATH", "/app/data/personalmanagement.db"))
 
+# The offline replay endpoint executes existing API handlers in one SQLite
+# transaction, including their idempotency receipt. Other requests remain isolated.
+_ACTIVE_REPLAY_CONNECTION: ContextVar[sqlite3.Connection | None] = ContextVar(
+    "pm_active_replay_connection", default=None
+)
+
+
+def begin_immediate(conn: sqlite3.Connection) -> None:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+
+
 @contextmanager
 def connection():
+    replay = _ACTIVE_REPLAY_CONNECTION.get()
+    if replay is not None:
+        yield replay
+        return
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=10)
@@ -223,7 +247,7 @@ def auth_wait_seconds(key: str) -> int:
 def auth_register_failure(key: str) -> int:
     now = int(time.time())
     with connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         row = conn.execute(
             "SELECT failures,window_started,blocked_until FROM auth_rate_limits WHERE client_key=?",
             (key,),
@@ -442,7 +466,7 @@ def update(kind: str, item_id: int, payload: dict[str, Any], request: Request):
     if kind=="projects" and areas is not None:
         values["area_id"]=areas[0] if areas else None
     with connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         previous=fetch_one(conn,kind,item_id)
         require_current_revision(request,previous)
         if kind=="tasks":validate_task_schedule(conn,values,previous)
@@ -474,7 +498,7 @@ def delete(kind: str, item_id: int, request: Request):
     if kind not in FIELDS:
         raise HTTPException(404, "Неизвестный тип записи")
     with connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         previous=fetch_one(conn, kind, item_id)
         require_current_revision(request,previous)
         conn.execute(f"DELETE FROM {kind} WHERE id = ?", (item_id,))
@@ -520,7 +544,7 @@ def put_occurrence(task_id:int,day:str,payload:dict[str,Any],request:Request):
         raise HTTPException(422,"Некорректные изменения повторения")
     changes=validate("tasks",raw.copy())
     with connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         task=series_task(conn,task_id,day)
         require_current_revision(request,task)
         # Merge sparse changes, preventing a second edit from losing an earlier one.
@@ -537,7 +561,7 @@ def put_occurrence(task_id:int,day:str,payload:dict[str,Any],request:Request):
 @app.delete("/api/task-occurrences/{task_id}/{day}",status_code=204)
 def reset_occurrence(task_id:int,day:str,request:Request):
     with connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         task=series_task(conn,task_id,day)
         require_current_revision(request,task)
         conn.execute("DELETE FROM task_occurrences WHERE task_id=? AND occurrence_date=?",(task_id,day))
@@ -556,7 +580,7 @@ def split_series(task_id:int,payload:dict[str,Any],request:Request):
     if "recurrence_until" in changes and changes["recurrence_until"] and changes["recurrence_until"]<day:
         raise HTTPException(422,"Окончание серии раньше начала")
     with connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         original=series_task(conn,task_id,day)
         require_current_revision(request,original)
         if day==original["scheduled_at"][:10]:
@@ -622,7 +646,7 @@ def edit_checklist(task_id:int,item_id:int,payload:dict[str,Any],request:Request
     values={k:(valid_title(v) if k=="title" else validate_done(v)) for k,v in payload.items()}
     with connection() as conn:
         task=fetch_one(conn,"tasks",task_id)
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         prev=owned(conn,"task_checklist",item_id,"task_id",task_id)
         require_current_revision(request,prev)
         conn.execute("UPDATE task_checklist SET "+",".join(f"{k}=?" for k in values)+",revision=revision+1 WHERE id=?",
@@ -634,7 +658,7 @@ def edit_checklist(task_id:int,item_id:int,payload:dict[str,Any],request:Request
 def remove_checklist(task_id:int,item_id:int,request:Request):
     with connection() as conn:
         task=fetch_one(conn,"tasks",task_id)
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         prev=owned(conn,"task_checklist",item_id,"task_id",task_id)
         require_current_revision(request,prev)
         conn.execute("DELETE FROM task_checklist WHERE id=?",(item_id,))
@@ -672,7 +696,7 @@ def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any],request:Requ
             values[key]=value
     with connection() as conn:
         fetch_one(conn,"projects",project_id)
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
         require_current_revision(request,prev)
         conn.execute("UPDATE project_milestones SET "+",".join(f"{k}=?" for k in values)+",revision=revision+1 WHERE id=?",
@@ -684,12 +708,117 @@ def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any],request:Requ
 def remove_milestone(project_id:int,item_id:int,request:Request):
     with connection() as conn:
         fetch_one(conn,"projects",project_id)
-        conn.execute("BEGIN IMMEDIATE")
+        begin_immediate(conn)
         prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
         require_current_revision(request,prev)
         conn.execute("DELETE FROM project_milestones WHERE id=?",(item_id,))
         record_activity(conn,project_id,"Этап удалён: "+prev["title"])
     return Response(status_code=204)
+
+
+# Every queued offline mutation is applied together with its receipt in ONE
+# SQLite transaction. Replaying the same operation after a lost HTTP response
+# returns the original result instead of creating a duplicate.
+@app.post("/api/offline/execute")
+def execute_offline_operation(payload: dict[str, Any], request: Request):
+    allowed = {"operation_id", "action", "kind", "item_id", "parent_id", "day", "values"}
+    if set(payload) - allowed or not {"operation_id", "action"} <= set(payload):
+        raise HTTPException(422, "Некорректная офлайн-операция")
+    try:
+        op_id = str(uuid.UUID(payload["operation_id"]))
+        if len(op_id) != len(payload["operation_id"]):
+            raise ValueError()
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(422, "Некорректный идентификатор операции")
+    action = payload["action"]
+    kind = payload.get("kind")
+    item_id = payload.get("item_id")
+    parent_id = payload.get("parent_id")
+    day = payload.get("day")
+    values = payload.get("values", {})
+    if action not in {"save", "remove", "occurrence", "reset_occurrence", "split",
+                      "extra_add", "extra_update", "extra_remove"}:
+        raise HTTPException(422, "Неизвестное офлайн-действие")
+    if not isinstance(values, dict) or len(json.dumps(values, ensure_ascii=False)) > 100_000:
+        raise HTTPException(422, "Некорректные данные операции")
+    if action in {"save", "remove"}:
+        if kind not in FIELDS:
+            raise HTTPException(422, "Неизвестный тип записи")
+        if action == "remove" or item_id is not None:
+            if not isinstance(item_id, int) or item_id <= 0:
+                raise HTTPException(422, "Некорректный ID записи")
+    elif action in {"occurrence", "reset_occurrence", "split"}:
+        if kind != "tasks" or not isinstance(item_id, int) or item_id <= 0:
+            raise HTTPException(422, "Некорректный ID задачи")
+        if not isinstance(day, str) or len(day) != 10:
+            raise HTTPException(422, "Некорректная дата повторения")
+    else:
+        if kind not in {"checklist", "milestones"}:
+            raise HTTPException(422, "Неизвестный тип элемента")
+        if not isinstance(parent_id, int) or parent_id <= 0:
+            raise HTTPException(422, "Некорректная родительская запись")
+        if action != "extra_add" and (not isinstance(item_id, int) or item_id <= 0):
+            raise HTTPException(422, "Некорректный ID элемента")
+    changes_existing = (
+        action in {"remove", "occurrence", "reset_occurrence", "split", "extra_update", "extra_remove"}
+        or action == "save" and item_id is not None
+    )
+    if changes_existing:
+        expected = request.headers.get("if-match")
+        if expected is None or not expected.isdigit() or int(expected) < 1:
+            raise HTTPException(422, "Для офлайн-изменения обязательна версия записи")
+    fingerprint = hashlib.sha256((
+        json.dumps(payload, sort_keys=True, ensure_ascii=False) +
+        "|" + (request.headers.get("if-match") or "")
+    ).encode("utf-8")).hexdigest()
+    with connection() as conn:
+        begin_immediate(conn)
+        previous = conn.execute(
+            "SELECT request_hash,result_json FROM offline_operation_receipts WHERE operation_id=?",
+            (op_id,),
+        ).fetchone()
+        if previous:
+            if previous["request_hash"] != fingerprint:
+                raise HTTPException(409, "Повторное использование ID операции с другим содержимым")
+            return json.loads(previous["result_json"])
+        token = _ACTIVE_REPLAY_CONNECTION.set(conn)
+        try:
+            if action == "save":
+                result = update(kind, item_id, values, request) if item_id is not None else create(kind, values)
+            elif action == "remove":
+                delete(kind, item_id, request)
+                result = None
+            elif action == "occurrence":
+                result = put_occurrence(item_id, day, {"changes": values}, request)
+            elif action == "reset_occurrence":
+                reset_occurrence(item_id, day, request)
+                result = None
+            elif action == "split":
+                result = split_series(item_id, {"occurrence_date": day, "changes": values}, request)
+            elif action == "extra_add":
+                result = add_checklist(parent_id, values) if kind == "checklist" else add_milestone(parent_id, values)
+            elif action == "extra_update":
+                result = edit_checklist(parent_id, item_id, values, request) if kind == "checklist" else edit_milestone(parent_id, item_id, values, request)
+            else:
+                if kind == "checklist":
+                    remove_checklist(parent_id, item_id, request)
+                else:
+                    remove_milestone(parent_id, item_id, request)
+                result = None
+            revision = None
+            if action in {"occurrence", "reset_occurrence", "split"}:
+                revision = fetch_one(conn, "tasks", item_id)["revision"]
+            elif action in {"save", "extra_update"} and isinstance(result, dict):
+                revision = result.get("revision")
+            envelope = {"result": result, "revision": revision}
+            conn.execute(
+                "INSERT INTO offline_operation_receipts(operation_id,request_hash,result_json) VALUES (?,?,?)",
+                (op_id, fingerprint, json.dumps(envelope, ensure_ascii=False)),
+            )
+        finally:
+            _ACTIVE_REPLAY_CONNECTION.reset(token)
+        return envelope
+
 
 @app.get("/api/export")
 def export():

@@ -322,3 +322,78 @@ def test_basic_password_lockout_ignores_spoofed_forwarded_ip(tmp_path,monkeypatc
         assert int(locked.headers["Retry-After"])>0
         assert client.get("/api/bootstrap",headers=auth()).status_code==429
         assert client.get("/api/health").status_code==200
+
+def test_offline_idempotency_and_related_records(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "offline-idempotent.db"))
+    with TestClient(app) as client:
+        operation = {
+            "operation_id": str(uuid.uuid4()), "action": "save",
+            "kind": "projects", "values": {"title": "Офлайн-проект"}
+        }
+        first = client.post("/api/offline/execute", headers=auth(), json=operation)
+        assert first.status_code == 200, first.text
+        again = client.post("/api/offline/execute", headers=auth(), json=operation)
+        assert again.status_code == 200 and again.json() == first.json()
+        project_id = first.json()["result"]["id"]
+        items = client.get("/api/bootstrap", headers=auth()).json()["projects"]
+        assert len(items) == 1 and items[0]["id"] == project_id
+        assert client.post("/api/offline/execute", headers=auth(), json={
+            **operation, "values": {"title": "Другое"}
+        }).status_code == 409
+
+        task_op = {
+            "operation_id": str(uuid.uuid4()), "action": "save", "kind": "tasks",
+            "values": {"title": "Задача из офлайна", "project_id": project_id}
+        }
+        task_response = client.post("/api/offline/execute", headers=auth(), json=task_op)
+        assert task_response.status_code == 200, task_response.text
+        assert task_response.json()["result"]["project_id"] == project_id
+        assert client.post("/api/offline/execute", headers=auth(), json=task_op).json() == task_response.json()
+
+        task = task_response.json()["result"]
+        changed = {
+            "operation_id": str(uuid.uuid4()), "action": "save",
+            "kind": "tasks", "item_id": task["id"], "values": {"status": "done"}
+        }
+        versioned = {**auth(), "If-Match": "1"}
+        first_update = client.post("/api/offline/execute", headers=versioned, json=changed)
+        assert first_update.status_code == 200, first_update.text
+        assert first_update.json()["revision"] == 2
+        assert client.post("/api/offline/execute", headers=versioned, json=changed).json() == first_update.json()
+        assert client.post("/api/offline/execute", headers=versioned, json={
+            **changed, "operation_id": str(uuid.uuid4()), "values": {"status": "waiting"}
+        }).status_code == 409
+        assert client.get("/api/bootstrap", headers=auth()).json()["tasks"][0]["status"] == "done"
+
+
+def test_offline_replay_occurrence_and_nested_checklist_once(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "offline-nested.db"))
+    with TestClient(app) as client:
+        task = client.post("/api/tasks", headers=auth(), json={
+            "title": "Ежедневно", "recurrence": "daily",
+            "scheduled_at": "2026-11-23T09:00"
+        }).json()
+        op = {
+            "operation_id": str(uuid.uuid4()), "action": "occurrence",
+            "kind": "tasks", "item_id": task["id"], "day": "2026-11-24",
+            "values": {"status": "done"}
+        }
+        versioned = {**auth(), "If-Match": str(task["revision"])}
+        initial = client.post("/api/offline/execute", headers=versioned, json=op)
+        assert initial.status_code == 200, initial.text
+        assert initial.json()["revision"] == 2
+        assert client.post("/api/offline/execute", headers=versioned, json=op).json() == initial.json()
+        assert client.get("/api/bootstrap", headers=auth()).json()["tasks"][0]["revision"] == 2
+
+        add = {
+            "operation_id": str(uuid.uuid4()), "action": "extra_add", "kind": "checklist",
+            "parent_id": task["id"], "values": {"title": "Выполнить шаг"}
+        }
+        created = client.post("/api/offline/execute", headers=auth(), json=add)
+        assert created.status_code == 200, created.text
+        assert client.post("/api/offline/execute", headers=auth(), json=add).json() == created.json()
+        assert len(client.get("/api/bootstrap", headers=auth()).json()["checklist"]) == 1
