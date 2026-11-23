@@ -7,6 +7,22 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: personalmanagement_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d personalmanagement_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/personalmanagement_test
     defaults:
       run:
         working-directory: backend
@@ -51,6 +67,22 @@ jobs:
 
   offline-e2e:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: personalmanagement_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d personalmanagement_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/personalmanagement_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,7 +106,6 @@ jobs:
         env:
           APP_USERNAME: owner
           APP_PASSWORD: offline-test-password
-          DATABASE_PATH: ${{ runner.temp }}/personalmanagement-offline-ci.db
           STATIC_DIR: ${{ github.workspace }}/frontend/dist
         run: |
           python -m uvicorn app:app --app-dir backend --host 127.0.0.1 --port 3000 > /tmp/pm-offline-uvicorn.log 2>&1 &
