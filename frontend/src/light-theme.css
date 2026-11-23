@@ -408,3 +408,8 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
  .schedule-now-clock{font-size:9px}
  .schedule-now-stroke::after{width:6px;height:6px}
 }
+
+/* Approved icon: small and quiet on desktop, absent in mobile navigation. */
+.pm-sidebar-logo{display:flex;align-items:center;margin:0 0 17px 12px;height:38px}
+.pm-sidebar-logo img{width:36px;height:36px;object-fit:contain;display:block}
+@media(max-width:760px){.pm-sidebar-logo{display:none!important}}
