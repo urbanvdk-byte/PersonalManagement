@@ -1,10 +1,47 @@
 import base64
 import os
-from pathlib import Path
+import uuid
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import psycopg
+import pytest
 from fastapi.testclient import TestClient
 
 from app import app
+
+
+@pytest.fixture(autouse=True)
+def isolated_postgres(monkeypatch):
+    """Each test gets its own PostgreSQL schema; never operate on production."""
+    base = os.environ.get("TEST_DATABASE_URL")
+    if not base:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL integration tests")
+    schema = "pm_test_" + uuid.uuid4().hex[:16]
+    with psycopg.connect(base, autocommit=True) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+    parts = urlsplit(base)
+    params = dict(parse_qsl(parts.query, keep_blank_values=True))
+    params["options"] = f"-c search_path={schema}"
+    isolated = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment))
+    monkeypatch.setenv("DATABASE_URL", isolated)
+    try:
+        yield
+    finally:
+        with psycopg.connect(base, autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def seed_legacy(schema_sql: str, inserts: list[tuple[str, tuple]]):
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        for statement in schema_sql.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+        ids = []
+        for sql, params in inserts:
+            cursor = conn.execute(sql, params)
+            if "RETURNING" in sql:
+                ids.append(cursor.fetchone()[0])
+        return ids
 
 
 def auth():
@@ -14,7 +51,6 @@ def auth():
 
 def test_entities_and_links(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "planner.db"))
     with TestClient(app) as client:
         assert client.get("/api/bootstrap").status_code == 401
         assert client.get("/api/health").json()["status"] == "ok"
@@ -37,7 +73,6 @@ def test_entities_and_links(tmp_path, monkeypatch):
 
 def test_validation(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "planner2.db"))
     with TestClient(app) as client:
         assert client.post("/api/tasks", headers=auth(), json={"title": ""}).status_code == 422
         assert client.post("/api/tasks", headers=auth(), json={"title": "X", "priority": 9}).status_code == 422
@@ -48,7 +83,6 @@ def test_validation(tmp_path, monkeypatch):
 
 def test_task_colors_and_area_emoji(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "colors.db"))
     with TestClient(app) as client:
         area = client.post("/api/areas", headers=auth(), json={"title": "Работа", "emoji": "💼"}).json()
         assert area["emoji"] == "💼"
@@ -60,16 +94,13 @@ def test_task_colors_and_area_emoji(tmp_path, monkeypatch):
 
 
 def test_non_destructive_upgrade_existing_schema(tmp_path, monkeypatch):
-    import sqlite3
     from app import SCHEMA
-    path = tmp_path / "existing.db"
     legacy = SCHEMA.replace("emoji TEXT NOT NULL DEFAULT '📁',", "").replace("  color TEXT NOT NULL DEFAULT '#3466d9',", "")
-    with sqlite3.connect(path) as conn:
-        conn.executescript(legacy)
-        conn.execute("INSERT INTO areas (title) VALUES (?)", ("Сохранённое направление",))
-        conn.execute("INSERT INTO tasks (title) VALUES (?)", ("Сохранённая задача",))
+    seed_legacy(legacy, [
+        ("INSERT INTO areas (title) VALUES (%s)", ("Сохранённое направление",)),
+        ("INSERT INTO tasks (title) VALUES (%s)", ("Сохранённая задача",)),
+    ])
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(path))
     with TestClient(app) as client:
         payload = client.get("/api/bootstrap", headers=auth()).json()
         assert payload["areas"][0]["title"] == "Сохранённое направление"
@@ -82,7 +113,6 @@ def test_non_destructive_upgrade_existing_schema(tmp_path, monkeypatch):
 
 def test_task_schedule_required_and_quarter_hour_duration(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "task-rules.db"))
     with TestClient(app) as client:
         without_time = client.post("/api/tasks", headers=auth(), json={"title": "Без времени", "status": "inbox"})
         assert without_time.status_code == 201 and without_time.json()["scheduled_at"] is None
@@ -109,14 +139,11 @@ def test_task_schedule_required_and_quarter_hour_duration(tmp_path, monkeypatch)
 
 def test_existing_unscheduled_tasks_remain_accessible(tmp_path, monkeypatch):
     # Older imported/seeded tasks with no time must not disappear or become undeletable.
-    import sqlite3
     from app import SCHEMA
-    path = tmp_path / "legacy-tasks.db"
-    with sqlite3.connect(path) as conn:
-        conn.executescript(SCHEMA)
-        conn.execute("INSERT INTO tasks (title) VALUES (?)", ("Старая без даты",))
+    seed_legacy(SCHEMA, [
+        ("INSERT INTO tasks (title) VALUES (%s)", ("Старая без даты",)),
+    ])
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(path))
     with TestClient(app) as client:
         old = client.get("/api/bootstrap", headers=auth()).json()["tasks"][0]
         assert old["scheduled_at"] is None
@@ -126,7 +153,6 @@ def test_existing_unscheduled_tasks_remain_accessible(tmp_path, monkeypatch):
 
 def test_recurrence_validation_and_sparse_exceptions(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD","local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"recurrence.db"))
     with TestClient(app) as client:
         assert client.post("/api/tasks",headers=auth(),json={"title":"Invalid","scheduled_at":"2026-11-16T10:00","recurrence":"sometimes"}).status_code==422
         task=client.post("/api/tasks",headers=auth(),json={"title":"Повтор","scheduled_at":"2026-11-16T10:00",
@@ -146,7 +172,6 @@ def test_recurrence_validation_and_sparse_exceptions(tmp_path,monkeypatch):
 
 def test_split_series_moves_future_exceptions_without_creating_all_occurrences(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD","local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"split.db"))
     with TestClient(app) as client:
         task=client.post("/api/tasks",headers=auth(),json={"title":"Серия","scheduled_at":"2026-01-31T09:00",
                          "recurrence":"monthly"}).json()
@@ -165,15 +190,12 @@ def test_split_series_moves_future_exceptions_without_creating_all_occurrences(t
         assert client.get("/api/bootstrap",headers=auth()).json()["occurrences"]==[]
 
 def test_recurrence_migration_preserves_legacy_task(tmp_path,monkeypatch):
-    import sqlite3
     from app import SCHEMA
-    path=tmp_path/"before-repeat.db"
     legacy=SCHEMA.replace("  recurrence_until TEXT,\n","")
-    with sqlite3.connect(path) as conn:
-        conn.executescript(legacy)
-        conn.execute("INSERT INTO tasks (title,scheduled_at) VALUES (?,?)",("Старая","2026-11-19T10:00"))
+    seed_legacy(legacy, [
+        ("INSERT INTO tasks (title,scheduled_at) VALUES (%s,%s)",("Старая","2026-11-19T10:00")),
+    ])
     monkeypatch.setenv("APP_PASSWORD","local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(path))
     with TestClient(app) as client:
         t=client.get("/api/bootstrap",headers=auth()).json()["tasks"][0]
         assert t["title"]=="Старая" and t["recurrence_until"] is None
@@ -181,7 +203,6 @@ def test_recurrence_migration_preserves_legacy_task(tmp_path,monkeypatch):
 
 def test_multiple_project_directions_and_related_entities(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD","local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"projects.db"))
     with TestClient(app) as client:
         a=client.post("/api/areas",headers=auth(),json={"title":"Работа"}).json()["id"]
         b=client.post("/api/areas",headers=auth(),json={"title":"Здоровье"}).json()["id"]
@@ -206,9 +227,7 @@ def test_multiple_project_directions_and_related_entities(tmp_path,monkeypatch):
         assert next(t for t in result["events"] if t["id"]==event["id"])["project_id"] is None
 
 def test_legacy_project_area_migration_preserves_links(tmp_path,monkeypatch):
-    import sqlite3
     from app import SCHEMA
-    path=tmp_path/"old-projects.db"
     original=SCHEMA.replace("""CREATE TABLE IF NOT EXISTS project_areas (
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   area_id INTEGER NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
@@ -216,12 +235,11 @@ def test_legacy_project_area_migration_preserves_links(tmp_path,monkeypatch):
 );
 CREATE INDEX IF NOT EXISTS idx_project_areas_area ON project_areas(area_id);
 ""","")
-    with sqlite3.connect(path) as db:
-        db.executescript(original)
-        area=db.execute("INSERT INTO areas(title) VALUES (?)",("Старая сфера",)).lastrowid
-        db.execute("INSERT INTO projects(title,area_id) VALUES (?,?)",("Старый проект",area))
+    seed_legacy(original, [])
+    with psycopg.connect(os.environ["DATABASE_URL"]) as db:
+        area=db.execute("INSERT INTO areas(title) VALUES (%s) RETURNING id",("Старая сфера",)).fetchone()[0]
+        db.execute("INSERT INTO projects(title,area_id) VALUES (%s,%s)",("Старый проект",area))
     monkeypatch.setenv("APP_PASSWORD","local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(path))
     with TestClient(app) as client:
         record=client.get("/api/bootstrap",headers=auth()).json()["projects"][0]
         assert record["title"]=="Старый проект"
@@ -234,7 +252,6 @@ CREATE INDEX IF NOT EXISTS idx_project_areas_area ON project_areas(area_id);
 
 def test_project_milestones_checklist_activity_and_cascade(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD","local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"extras.db"))
     with TestClient(app) as client:
         project=client.post("/api/projects",headers=auth(),json={"title":"Проект"}).json()
         task=client.post("/api/tasks",headers=auth(),json={"title":"Подготовить","project_id":project["id"]}).json()
@@ -265,7 +282,6 @@ def test_project_milestones_checklist_activity_and_cascade(tmp_path,monkeypatch)
 
 def test_partial_event_update_rejects_invalid_interval(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"event-update.db"))
     with TestClient(app) as client:
         event=client.post("/api/events",headers=auth(),json={
             "title":"Встреча","starts_at":"2026-11-23T10:00","ends_at":"2026-11-23T11:00"
@@ -280,7 +296,6 @@ def test_partial_event_update_rejects_invalid_interval(tmp_path,monkeypatch):
 
 def test_concurrent_tab_revision_rejects_stale_edits_and_delete(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"revisions.db"))
     with TestClient(app) as client:
         task=client.post("/api/tasks",headers=auth(),json={"title":"До изменения"}).json()
         assert task["revision"]==1
@@ -296,7 +311,6 @@ def test_concurrent_tab_revision_rejects_stale_edits_and_delete(tmp_path,monkeyp
 
 def test_recurrence_override_advances_master_revision(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"occ-revisions.db"))
     with TestClient(app) as client:
         task=client.post("/api/tasks",headers=auth(),json={
             "title":"Повтор","scheduled_at":"2026-11-23T09:00","recurrence":"daily"
@@ -311,7 +325,6 @@ def test_recurrence_override_advances_master_revision(tmp_path,monkeypatch):
 
 def test_basic_password_lockout_ignores_spoofed_forwarded_ip(tmp_path,monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH",str(tmp_path/"auth.db"))
     bad={"Authorization":"Basic "+base64.b64encode(b"owner:wrong").decode()}
     with TestClient(app) as client:
         for attempt in range(4):
@@ -326,7 +339,6 @@ def test_basic_password_lockout_ignores_spoofed_forwarded_ip(tmp_path,monkeypatc
 def test_offline_idempotency_and_related_records(tmp_path, monkeypatch):
     import uuid
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "offline-idempotent.db"))
     with TestClient(app) as client:
         operation = {
             "operation_id": str(uuid.uuid4()), "action": "save",
@@ -371,7 +383,6 @@ def test_offline_idempotency_and_related_records(tmp_path, monkeypatch):
 def test_offline_replay_occurrence_and_nested_checklist_once(tmp_path, monkeypatch):
     import uuid
     monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "offline-nested.db"))
     with TestClient(app) as client:
         task = client.post("/api/tasks", headers=auth(), json={
             "title": "Ежедневно", "recurrence": "daily",
