@@ -71,8 +71,9 @@ async function pendingCount():Promise<number>{
 }
 function emitChange():void{window.dispatchEvent(new Event(CHANGE_EVENT));}
 function notify(status:OfflineStatus):void{window.dispatchEvent(new CustomEvent(SYNC_EVENT,{detail:status}));}
-function minNegative(data:Store):number{
+function minNegative(data:Store,map:IdMap):number{
  let min=0;
+ for(const key of Object.keys(map))min=Math.min(min,Number(key));
  for(const kind of KINDS)for(const record of data[kind])min=Math.min(min,record.id);
  for(const record of data.checklist||[])min=Math.min(min,record.id);
  for(const record of data.milestones||[])min=Math.min(min,record.id);
@@ -83,10 +84,24 @@ function rewrite(value:unknown,map:IdMap,key=''):unknown{
   if(map[value]===undefined)throw Error('Не найдена серверная запись для локальной связи '+value);
   return map[value];
  }
- if(key==='area_ids'&&Array.isArray(value))return value.map(id=>typeof id==='number'&&id<0?map[id]??id:id);
+ if(key==='area_ids'&&Array.isArray(value))return value.map(id=>{
+  if(typeof id!=='number'||id>=0)return id;
+  if(map[id]===undefined)throw Error('Не найдена серверная запись для направления '+id);
+  return map[id];
+ });
  if(Array.isArray(value))return value.map(x=>rewrite(x,map));
  if(value&&typeof value==='object')return Object.fromEntries(
   Object.entries(value as Record<string,unknown>).map(([k,v])=>[k,rewrite(v,map,k)])
+ );
+ return value;
+}
+/** IDs that were already acknowledged may be edited by a still-open drawer. */
+function localKnownIds(value:unknown,map:IdMap,key=''):unknown{
+ if(typeof value==='number'&&value<0&&LINK_FIELDS.has(key))return map[value]??value;
+ if(key==='area_ids'&&Array.isArray(value))return value.map(id=>typeof id==='number'&&id<0?map[id]??id:id);
+ if(Array.isArray(value))return value.map(x=>localKnownIds(x,map));
+ if(value&&typeof value==='object')return Object.fromEntries(
+  Object.entries(value as Record<string,unknown>).map(([k,v])=>[k,localKnownIds(v,map,k)])
  );
  return value;
 }
@@ -177,7 +192,7 @@ async function replaceSnapshot(data:Store):Promise<boolean>{
     const current=get.result as Snapshot|undefined;
     if(current&&JSON.stringify(current.data)===JSON.stringify(data))return;
     meta.put({key:'snapshot',version:(current?.version??0)+1,data,updatedAt:Date.now()} as Snapshot);
-    meta.put({key:'mappings',value:{}});eligible=true;
+    eligible=true;
    };
   };
   tx.oncomplete=()=>resolve(eligible);
@@ -271,11 +286,18 @@ export class OfflineEngine {
      await this.load();current=await snapshot();
     }
     if(!current)throw Error(CACHE_WARNING);
+    const known=await mappings();
+    const localDetails={
+     ...details,
+     ...(details.item_id===undefined?{}:{item_id:details.item_id<0?known[details.item_id]??details.item_id:details.item_id}),
+     ...(details.parent_id===undefined?{}:{parent_id:details.parent_id<0?known[details.parent_id]??details.parent_id:details.parent_id}),
+     values:localKnownIds(details.values,known) as Record<string,unknown>
+    };
     const created=details.action==='save'&&details.item_id===undefined||
      details.action==='extra_add'||details.action==='split';
     const op:OfflineOperation={
-     ...details,operation_id:crypto.randomUUID(),sequence:current.version+1,
-     ...(created?{temp_id:minNegative(current.data)}:{})
+     ...localDetails,operation_id:crypto.randomUUID(),sequence:current.version+1,
+     ...(created?{temp_id:minNegative(current.data,known)}:{})
     };
     const updated=await this.apply(current.data,op);
     if(await commit(current.version,updated,op)){
@@ -321,7 +343,11 @@ export class OfflineEngine {
     this.update(statusMessage(error),error instanceof Error?error.message:String(error));
    }
   };
-  this.active=job().finally(()=>{this.active=null});
+  this.active=job().finally(()=>{
+   this.active=null;
+   if(this.current.mode==='syncing'&&this.current.pending>0&&navigator.onLine)
+    void this.syncNow();
+  });
   return this.active;
  }
  async keepLocalConflict():Promise<void>{
@@ -348,13 +374,19 @@ export class OfflineEngine {
   await this.syncNow();
  }
  async discardAllPending():Promise<void>{
+  // Never destroy the only copy before a fresh server snapshot was fetched.
+  const remote=await serverBootstrap();
   const db=await database();
   const tx=db.transaction(['queue','meta'],'readwrite');
-  tx.objectStore('queue').clear();
-  tx.objectStore('meta').put({key:'mappings',value:{}});
+  const meta=tx.objectStore('meta');
+  const get=meta.get('snapshot');
+  get.onsuccess=()=>{
+   const old=get.result as Snapshot|undefined;
+   tx.objectStore('queue').clear();
+   meta.put({key:'snapshot',version:(old?.version||0)+1,data:remote,updatedAt:Date.now()} as Snapshot);
+   meta.put({key:'mappings',value:{}});
+  };
   await done(tx);
-  const remote=await serverBootstrap();
-  await replaceSnapshot(remote);
   await this.count();
   this.broadcast();
   this.update('ready','Локальные изменения отменены');
