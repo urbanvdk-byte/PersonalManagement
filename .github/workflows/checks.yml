@@ -48,3 +48,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t personalmanagement:ci .
+
+  offline-e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install API and browser dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          cd frontend
+          npm install --no-audit --no-fund
+          npx playwright install chromium --only-shell
+      - name: Build the real server-connected offline application
+        run: |
+          cd frontend
+          npm run build
+          test -s dist/sw.js
+      - name: Run real browser offline/online synchronization test
+        env:
+          APP_USERNAME: owner
+          APP_PASSWORD: offline-test-password
+          DATABASE_PATH: ${{ runner.temp }}/personalmanagement-offline-ci.db
+          STATIC_DIR: ${{ github.workspace }}/frontend/dist
+        run: |
+          python -m uvicorn app:app --app-dir backend --host 127.0.0.1 --port 8000 > /tmp/pm-offline-uvicorn.log 2>&1 &
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:8000/api/health
+          cd frontend
+          npx playwright test --config=playwright.offline.config.ts
