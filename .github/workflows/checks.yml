@@ -114,5 +114,9 @@ jobs:
             sleep 1
           done
           curl --fail http://127.0.0.1:3000/api/health
+          curl --fail --silent --show-error --user owner:offline-test-password http://127.0.0.1:3000/api/bootstrap > /tmp/pm-bootstrap.json
+          python -c "import json; d=json.load(open('/tmp/pm-bootstrap.json')); print('Bootstrap:', sorted(d.keys()))"
+          curl --fail --silent --show-error --user owner:offline-test-password http://127.0.0.1:3000/ > /tmp/pm-index.html
+          grep -q 'PersonalManagement' /tmp/pm-index.html
           cd frontend
-          npx playwright test --config=playwright.offline.config.ts
+          npx playwright test --config=playwright.offline.config.ts || { cat /tmp/pm-offline-uvicorn.log; exit 1; }
