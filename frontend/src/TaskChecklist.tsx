@@ -26,7 +26,7 @@ export default function TaskChecklist({taskId,items,reload}:{
    </div>)}
    <div className="checklist-add">
      <input aria-label="Новый пункт чек-листа" placeholder="Новый пункт…" value={title}
-       onChange={e=>setTitle(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();if(title.trim())void change(async()=>{await api.addChecklist(taskId,title.trim());setTitle('')})}}}/>
+       onChange={e=>setTitle(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();if(!busy&&title.trim())void change(async()=>{await api.addChecklist(taskId,title.trim());setTitle('')})}}}/>
      <button type="button" disabled={busy||!title.trim()} onClick={()=>void change(async()=>{await api.addChecklist(taskId,title.trim());setTitle('')})}><Plus size={15}/> Добавить</button>
    </div>
    {error&&<small role="alert" className="field-error">{error}</small>}

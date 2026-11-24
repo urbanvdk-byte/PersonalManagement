@@ -75,7 +75,7 @@ test('completed tasks and meetings stay in the day timeline and can be reopened'
    const undo=schedule.getByRole('button',{name:'Отменить выполнение: '+title,exact:true});
    await expect(undo).toBeVisible();
    await expect(entry).toHaveClass(/schedule-entry-done/);
-   await expect(entry.locator('.schedule-time-col')).toHaveText(time);
+   await expect(entry.locator('.schedule-time-col')).toHaveText(time,{useInnerText:true});
    await undo.click();
    await expect(complete).toBeVisible();
  }

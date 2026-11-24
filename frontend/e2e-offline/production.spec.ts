@@ -146,7 +146,7 @@ test('checklist survives offline creation, ID remapping and edits in an open tas
  const second='Второй пункт '+Date.now();
  await page.getByRole('textbox',{name:'Быстрая запись задачи'}).fill(title);
  await page.locator('.quick-capture').getByRole('button',{name:'Добавить'}).click();
- await page.locator('.sidebar').getByRole('button',{name:'Входящие',exact:true}).click();
+ await page.locator('.sidebar .nav-item').filter({hasText:'Входящие'}).click();
  await page.locator('.task-main').filter({hasText:title}).click();
  const drawer=page.getByRole('dialog',{name:'Редактирование'});
  const checklist=drawer.locator('.checklist-editor');
