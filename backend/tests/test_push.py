@@ -63,3 +63,33 @@ def test_device_timezone_at_midnight():
     assert not due_tasks([task],{},at("2026-11-19T17:00"))
     with pytest.raises(ValueError):
         validate_subscription({**subscription(),"timezone":"invalid/zone"})
+
+
+def test_real_vapid_signature_and_transport(monkeypatch):
+    """Run actual pywebpush signing/encryption, intercept only the network call."""
+    import requests
+    from py_vapid import Vapid02
+    from push_reminders import deliver
+    key=ec.generate_private_key(ec.SECP256R1())
+    private=b64(key.private_bytes(serialization.Encoding.DER,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
+    public=b64(key.public_key().public_bytes(serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))
+    captured=[]
+    def fake_send(self,request,**kwargs):
+        captured.append(request)
+        response=requests.Response()
+        response.status_code=201
+        response._content=b""
+        return response
+    monkeypatch.setattr(requests.sessions.Session,"send",fake_send)
+    for subject in (None,"https://persmanag.bothost.tech/"):
+        if subject is None:
+            monkeypatch.delenv("PM_PUSH_SUBJECT",raising=False)
+        else:
+            monkeypatch.setenv("PM_PUSH_SUBJECT",subject)
+        deliver(subscription(),{"title":"Test","body":"Test"},private)
+    assert len(captured)==2
+    for request in captured:
+        auth=request.headers["Authorization"]
+        assert Vapid02.verify(auth)
+        assert auth.endswith("k="+public)
+        assert request.headers["Content-Encoding"]=="aes128gcm"

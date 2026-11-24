@@ -100,9 +100,13 @@ def send(subscription,task,key):
           "tag":identity,"url":"/?"+urlencode({"task":task["id"],"day":when[:10]})}
     deliver(subscription,body,key)
 
+def vapid_subject():
+    # py-vapid's strict HTTPS subject validator accepts an origin, not a trailing slash.
+    return os.environ.get("PM_PUSH_SUBJECT","https://persmanag.bothost.tech").strip().rstrip("/")
+
 def deliver(subscription,body,key):
     webpush(subscription_info={k:subscription[k] for k in ("endpoint","keys")},data=json.dumps(body,ensure_ascii=False),
-            vapid_private_key=key,vapid_claims={"sub":os.environ.get("PM_PUSH_SUBJECT","https://persmanag.bothost.tech/")},
+            vapid_private_key=key,vapid_claims={"sub":vapid_subject()},
             ttl=300,timeout=10)
 
 def process_push(now):
