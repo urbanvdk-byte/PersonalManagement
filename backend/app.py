@@ -261,9 +261,20 @@ def auth_register_failure(key: str) -> int:
         return max(0, blocked_until - now)
 
 
+# Chrome may fetch install metadata outside the authenticated browser tab.
+# Only these static branding assets can be served without a password.
+PUBLIC_BRANDING_PATHS = frozenset({
+    "/manifest.webmanifest",
+    "/favicon-32.png", "/brand-icon-192.png",
+    "/favicon-v2-32.png", "/brand-icon-v2-192.png", "/brand-icon-v2-512.png",
+})
+
+
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
-    if request.url.path == "/api/health":
+    if request.url.path == "/api/health" or (
+        request.method in ("GET", "HEAD") and request.url.path in PUBLIC_BRANDING_PATHS
+    ):
         return await call_next(request)
     key = auth_client_key(request)
     retry = auth_wait_seconds(key)

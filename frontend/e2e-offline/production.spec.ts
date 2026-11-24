@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,request as apiRequest} from '@playwright/test';
 
 test('production opens offline, retains edits after reload and syncs them once',async({page,context})=>{
  await page.goto('/');
@@ -103,6 +103,19 @@ test('approved branding assets load, hide on mobile, and define home-screen icon
    return {width:image.naturalWidth,height:image.naturalHeight};
   },path);
   expect(image).toEqual({width:size,height:size});
+ }
+ // Chrome may fetch the install manifest and icons without Basic Auth.
+ const guest=await apiRequest.newContext();
+ try{
+  for(const path of ['manifest.webmanifest','favicon-v2-32.png','brand-icon-v2-192.png','brand-icon-v2-512.png']){
+   const res=await guest.get('http://127.0.0.1:3000/'+path);
+   expect(res.status(),path+' should be public to Android Chrome').toBe(200);
+   expect((await res.body()).length).toBeGreaterThan(100);
+  }
+  const privateData=await guest.get('http://127.0.0.1:3000/api/bootstrap');
+  expect(privateData.status(),'Private API must require password').toBe(401);
+ } finally {
+  await guest.dispose();
  }
  await page.setViewportSize({width:390,height:844});
  await expect(logo).toBeHidden();
