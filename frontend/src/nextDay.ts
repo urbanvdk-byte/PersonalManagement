@@ -1,5 +1,5 @@
 import {addDays,dayKey,makeDay} from './date.ts';
-import type {EventItem,Task} from './types';
+import type {LegacyEventItem,Task} from './types';
 
 /**
  * "Next day" is relative to the date of the calendar card, not to today's
@@ -26,7 +26,7 @@ export function nextTaskDay(task:Pick<Task,'scheduled_at'>):{scheduled_at:string
  return {scheduled_at:nextScheduledDay(task.scheduled_at),status:'planned'};
 }
 
-export function nextEventDay(event:Pick<EventItem,'starts_at'|'ends_at'>):{starts_at:string;ends_at:string}{
+export function nextEventDay(event:Pick<LegacyEventItem,'starts_at'|'ends_at'>):{starts_at:string;ends_at:string}{
  return {
    starts_at:nextScheduledDay(event.starts_at),
    ends_at:nextScheduledDay(event.ends_at)

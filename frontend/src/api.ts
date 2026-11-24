@@ -1,7 +1,7 @@
-import type {Kind,Store} from './types';
+import type {Kind,Store,LegacyEventItem} from './types';
 import {OfflineEngine,type OfflineOperation} from './offline';
 import {addDays,dateTimeLocal,dayKey,weekStart} from './date';
-import {DEFAULT_TASK_COLOR} from './taskPalette';
+import {DEFAULT_TASK_COLOR,taskColor} from './taskPalette';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import {isOccurrenceDate,beforeDate} from './recurrence';
 
@@ -51,12 +51,10 @@ function initialDemo():Store{
       {id:2,title:'Провести тренировку',area_id:2,project_id:null,goal_id:1,parent_id:null,notes:'Пример задачи из направления Здоровье',priority:2,important:1,urgent:0,status:'planned',scheduled_at:slot(addDays(now,1),18),due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:'#39aa6f',created_at,updated_at:created_at},
       {id:3,title:'Разобрать покупки на неделю',area_id:3,project_id:null,goal_id:null,parent_id:null,notes:'Пример повседневного дела',priority:3,important:0,urgent:1,status:'inbox',scheduled_at:null,due_at:slot(addDays(now,2),17),duration_minutes:30,recurrence:'',recurrence_until:null,color:'#ff963b',created_at,updated_at:created_at},
       {id:4,title:'Идея для будущего проекта',area_id:1,project_id:null,goal_id:null,parent_id:null,notes:'Сохранено на потом',priority:4,important:0,urgent:0,status:'someday',scheduled_at:null,due_at:null,duration_minutes:30,recurrence:'',recurrence_until:null,color:'#9463d6',created_at,updated_at:created_at}
+      ,{id:5,title:'Тестовая встреча',area_id:1,project_id:1,goal_id:null,parent_id:null,notes:'Пример встречи как задачи',priority:4,important:0,urgent:0,status:'planned',scheduled_at:slot(now,14),due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:'#e4b636',created_at,updated_at:created_at},
+      {id:6,title:'Личное время',area_id:3,project_id:null,goal_id:null,parent_id:null,notes:'Демонстрационный блок',priority:4,important:0,urgent:0,status:'planned',scheduled_at:slot(addDays(now,2),19),due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:'#16a2dc',created_at,updated_at:created_at}
     ],
-    occurrences:[],checklist:[],milestones:[],activity:[],
-    events:[
-      {id:1,title:'Тестовая встреча',area_id:1,project_id:1,notes:'Вымышленное событие',starts_at:slot(now,14),ends_at:slot(now,15),color:'#f0b23c',created_at},
-      {id:2,title:'Личное время',area_id:3,project_id:null,notes:'Демонстрационный блок',starts_at:slot(addDays(now,2),19),ends_at:slot(addDays(now,2),20),color:'#3c9ee5',created_at}
-    ]
+    occurrences:[],checklist:[],milestones:[],activity:[]
   };
 }
 let offlineDraft:Store|null=null;
@@ -65,8 +63,8 @@ function loadDemo():Store{
   try{
     const raw=localStorage.getItem(STORAGE_KEY);
     if(raw){
-      const data=JSON.parse(raw) as Store;
-      if(['areas','projects','goals','tasks','events'].every(k=>Array.isArray(data[k as Kind]))){
+      const data=JSON.parse(raw) as Store & {events?:LegacyEventItem[]};
+      if(['areas','projects','goals','tasks'].every(k=>Array.isArray(data[k as Kind]))){
         if(!Array.isArray(data.occurrences))data.occurrences=[];
         if(!Array.isArray(data.checklist))data.checklist=[];
         if(!Array.isArray(data.milestones))data.milestones=[];
@@ -74,13 +72,21 @@ function loadDemo():Store{
         for(const project of data.projects){
           if(!Array.isArray(project.area_ids))project.area_ids=project.area_id?[project.area_id]:[];
         }
-        for(const kind of ['areas','projects','goals','tasks','events'] as Kind[])
+        for(const kind of ['areas','projects','goals','tasks'] as Kind[])
           for(const item of data[kind])item.revision ||= 1;
         for(const item of data.checklist||[])item.revision ||= 1;
         for(const item of data.milestones||[])item.revision ||= 1;
         // Demo data is local-only; migrate legacy milestones once, retaining originals.
         const migrated=new Set(data.migrated_milestone_ids||[]);
         let changed=false;
+        if(Array.isArray(data.events)){
+          for(const event of data.events){
+            const id=Math.max(0,...data.tasks.map(t=>t.id))+1;
+            const duration=Math.max(30,Math.min(1440,Math.ceil((new Date(event.ends_at).getTime()-new Date(event.starts_at).getTime())/900000)*15));
+            data.tasks.push({id,title:event.title,area_id:event.area_id,project_id:event.project_id,goal_id:null,parent_id:null,notes:event.notes,priority:4,important:0,urgent:0,status:event.done?'done':'planned',scheduled_at:event.starts_at,due_at:null,duration_minutes:duration,recurrence:'',recurrence_until:null,color:taskColor(event.color),created_at:event.created_at,updated_at:event.created_at,revision:1});
+          }
+          delete data.events;changed=true;
+        }
         for(const milestone of data.milestones||[]){
           if(migrated.has(milestone.id))continue;
           const project=data.projects.find(p=>p.id===milestone.project_id);
@@ -109,8 +115,7 @@ const defaults:Record<Kind,Row>={
   areas:{color:'#4689db',emoji:'📁'},
   projects:{area_id:null,area_ids:[],description:'',status:'active',start_date:null,due_date:null},
   goals:{area_id:null,project_id:null,description:'',period_start:null,period_end:null,start_value:0,target_value:1,current_value:0,unit:'',measurable:1,done:0},
-  tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:DEFAULT_TASK_COLOR},
-  events:{area_id:null,project_id:null,notes:'',color:'#f3bb28',done:0}
+  tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:DEFAULT_TASK_COLOR}
 };
 async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number):Promise<void>{
   if('title' in values&&(!String(values.title||'').trim()))throw Error('Укажите название');
@@ -139,11 +144,6 @@ async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number
     const row=list.find(x=>x.id===id);
     if(!row)throw Error('Запись не найдена');
     checkRevision(Number(row.revision)||1,expectedRevision);
-    if(kind==='events'){
-      const full={...row,...values};
-      if(!full.starts_at||!full.ends_at||String(full.starts_at)>=String(full.ends_at))
-        throw Error('Окончание события должно быть позднее начала');
-    }
     if(kind==='tasks'&&String(values.recurrence??row.recurrence??'')&&!String(values.scheduled_at??row.scheduled_at??''))
       throw Error('Для повторяющейся задачи нужна дата и время');
     Object.assign(row,values);
@@ -155,8 +155,6 @@ async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number
     row.revision=(Number(row.revision)||1)+1;
   }else{
     if(!String(values.title||'').trim())throw Error('Укажите название');
-    if(kind==='events'&&(!values.starts_at||!values.ends_at||String(values.starts_at)>=String(values.ends_at)))
-      throw Error('Укажите корректное начало и окончание события');
     if(kind==='tasks'&&values.recurrence&&!values.scheduled_at)
       throw Error('Для повторяющейся задачи нужна дата и время');
     if(kind==='projects'&&values.area_ids===undefined)
@@ -165,7 +163,7 @@ async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number
     list.push({...defaults[kind],...values,id:newId,created_at:stamp,revision:1,...(kind==='tasks'?{updated_at:stamp}:{})});
   }
   if(kind==='projects')writeActivity(data,id||Number((data.projects as unknown as Row[]).at(-1)?.id),"Проект: "+String(values.title||'обновлён'));
-  if(kind==='tasks'||kind==='goals'||kind==='events'){
+  if(kind==='tasks'||kind==='goals'){
     const target=id?(list.find(x=>x.id===id)?.project_id):values.project_id;
     writeActivity(data,Number(target)||null,(id?'Обновлено: ':'Создано: ')+String(values.title||list.find(x=>x.id===id)?.title||''));
   }
@@ -185,14 +183,12 @@ async function demoRemove(kind:Kind,id:number,expectedRevision?:number):Promise<
     });
     data.goals.forEach(x=>{if(x.area_id===id)x.area_id=null});
     data.tasks.forEach(x=>{if(x.area_id===id)x.area_id=null});
-    data.events.forEach(x=>{if(x.area_id===id)x.area_id=null});
   }
   if(kind==='projects'){
     data.milestones=(data.milestones||[]).filter(m=>m.project_id!==id);
     data.activity=(data.activity||[]).filter(a=>a.project_id!==id);
     data.tasks.forEach(x=>{if(x.project_id===id)x.project_id=null});
     data.goals.forEach(x=>{if(x.project_id===id)x.project_id=null});
-    data.events.forEach(x=>{if(x.project_id===id)x.project_id=null});
   }
   if(kind==='goals')data.tasks.forEach(x=>{if(x.goal_id===id)x.goal_id=null});
   if(kind==='tasks'){

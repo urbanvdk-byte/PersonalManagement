@@ -4,7 +4,7 @@ import type {Kind,Store} from './types';
 export type OfflineAction = 'save'|'remove'|'occurrence'|'reset_occurrence'|'split'|'extra_add'|'extra_update'|'extra_remove';
 export type OfflineOperation = {
  operation_id:string;sequence:number;action:OfflineAction;
- kind:Kind|'checklist'|'milestones';item_id?:number;parent_id?:number;
+ kind:Kind|'events'|'checklist'|'milestones';item_id?:number;parent_id?:number;
  day?:string;values:Record<string,unknown>;revision?:number;temp_id?:number;
 };
 export type OfflineMode = 'ready'|'offline'|'syncing'|'conflict'|'auth'|'error';
@@ -16,7 +16,7 @@ type Envelope = {result:Record<string,unknown>|null;revision:number|null};
 const DATABASE='personalmanagement-offline-v1';
 const CHANGE_EVENT='personalmanagement:offline-change';
 const SYNC_EVENT='personalmanagement:offline-status';
-const KINDS:Kind[]=['areas','projects','goals','tasks','events'];
+const KINDS:Kind[]=['areas','projects','goals','tasks'];
 const LINK_FIELDS=new Set(['area_id','project_id','goal_id','parent_id','task_id']);
 const CACHE_WARNING='Нет сохранённой копии данных. Откройте менеджер с интернетом хотя бы один раз.';
 const networkMessage='Изменения сохранены на устройстве. Они будут переданы на сервер после появления интернета.';
