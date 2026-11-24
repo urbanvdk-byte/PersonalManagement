@@ -82,7 +82,7 @@ test('approved branding assets load, hide on mobile, and define home-screen icon
  await expect(logo).toBeVisible();
  await expect.poll(()=>logo.evaluate((node:HTMLImageElement)=>node.naturalWidth)).toBe(192);
  const html=await page.locator('head').innerHTML();
- expect(html).toContain('favicon-32.png');
+ expect(html).toContain('favicon-v2-32.png');
  expect(html).toContain('manifest.webmanifest');
  const manifest=await page.evaluate(async()=>{
   const url=document.querySelector<HTMLLinkElement>('link[rel="manifest"]')?.href;
@@ -92,7 +92,18 @@ test('approved branding assets load, hide on mobile, and define home-screen icon
   return await response.json() as {display:string;icons:Array<{src:string;sizes:string}>};
  });
  expect(manifest.display).toBe('standalone');
- expect(manifest.icons.some(item=>item.src.includes('brand-icon-192.png')&&item.sizes==='192x192')).toBe(true);
+ expect(manifest.icons.some(item=>item.src.includes('brand-icon-v2-192.png')&&item.sizes==='192x192')).toBe(true);
+ expect(manifest.icons.some(item=>item.src.includes('brand-icon-v2-512.png')&&item.sizes==='512x512')).toBe(true);
+ for(const size of [32,192,512]){
+  const path=size===32?'favicon-v2-32.png':`brand-icon-v2-${size}.png`;
+  const image=await page.evaluate(async(path:string)=>{
+   const image=new Image();
+   image.src=new URL(path,document.baseURI).href;
+   await image.decode();
+   return {width:image.naturalWidth,height:image.naturalHeight};
+  },path);
+  expect(image).toEqual({width:size,height:size});
+ }
  await page.setViewportSize({width:390,height:844});
  await expect(logo).toBeHidden();
 });

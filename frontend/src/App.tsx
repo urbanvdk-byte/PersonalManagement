@@ -420,7 +420,7 @@ export default function App(){
  const addSlot=(d:Date)=>open('tasks',{scheduled_at:dateTimeLocal(d),status:'planned'});
  return <div className="app">
   <aside className={'sidebar '+(mobile?'open':'')}>
-   <div className="pm-sidebar-logo"><img src={import.meta.env.BASE_URL+'brand-icon-192.png'} alt="PersonalManagement" width="36" height="36"/></div>
+   <div className="pm-sidebar-logo"><img src={import.meta.env.BASE_URL+'brand-icon-v2-192.png'} alt="PersonalManagement" width="36" height="36"/></div>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
    <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{if(p.id==='schedule')goToDay(dayKey(new Date()));setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
    <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>

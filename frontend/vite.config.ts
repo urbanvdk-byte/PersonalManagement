@@ -23,7 +23,13 @@ function offlineShell():Plugin{
    }
    const assets=(await collect(output)).sort();
    const html=await readFile(join(output,'index.html'));
-   const hash=createHash('sha256').update(assets.join('|')).update(html).digest('hex').slice(0,16);
+   const fingerprint=createHash('sha256').update(html);
+   // Changes to icons must invalidate the cached offline shell even if the
+   // filename and HTML stay the same (previously only asset names were hashed).
+   for(const asset of assets){
+    fingerprint.update(asset).update(await readFile(join(output,asset)));
+   }
+   const hash=fingerprint.digest('hex').slice(0,16);
    const template=await readFile(join(process.cwd(),'offline.sw.template.js'),'utf8');
    const serviceWorker=template
     .replace('__BUILD_VERSION__',hash)
