@@ -10,5 +10,5 @@ export type TaskOccurrence={task_id:number;occurrence_date:string;changes:Record
 export type ChecklistItem={id:number;task_id:number;title:string;done:number;position:number;revision?:number};
 export type Milestone={id:number;project_id:number;title:string;due_date:string|null;done:number;position:number;revision?:number};
 export type ActivityItem={id:number;project_id:number;message:string;happened_at:string};
-export type Store = {areas:Area[];projects:Project[];goals:Goal[];tasks:Task[];events:EventItem[];occurrences?:TaskOccurrence[];checklist?:ChecklistItem[];milestones?:Milestone[];activity?:ActivityItem[]};
+export type Store = {areas:Area[];projects:Project[];goals:Goal[];tasks:Task[];events:EventItem[];occurrences?:TaskOccurrence[];checklist?:ChecklistItem[];milestones?:Milestone[];migrated_milestone_ids?:number[];activity?:ActivityItem[]};
 export type Editing={kind:Kind;requireSchedule?:boolean;record?:Area|Project|Goal|Task|EventItem;defaults?:Record<string,unknown>};

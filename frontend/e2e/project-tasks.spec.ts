@@ -36,12 +36,12 @@ test('priority matrix and completed tasks each collapse independently',async({pa
  await page.locator('.nav-item',{hasText:'Все задачи'}).click();
  const p3=page.locator('details.m3');
  await expect(p3).not.toHaveAttribute('open','');
- await p3.locator('summary').click();
+ await p3.locator(':scope > summary').click();
  await expect(p3).toHaveAttribute('open','');
  await expect(p3).toContainText('Срочное P3');
  const completed=page.locator('details.completed-group').first();
  await expect(completed).not.toHaveAttribute('open','');
- await completed.locator('summary').click();
+ await completed.locator(':scope > summary').click();
  await expect(completed).toContainText('Завершено');
 });
 test('project opens its container; multi-direction edit is separate',async({page})=>{
@@ -74,4 +74,16 @@ test('project opens its container; multi-direction edit is separate',async({page
  expect(project.area_ids).toHaveLength(1);
  expect(task.project_id).toBe(project.id);
  expect(task.scheduled_at).toBeNull();
+});
+
+test('project headers fold independently and task cards show their goals',async({page})=>{
+ await page.goto('/');
+ await page.locator('.nav-item',{hasText:'Все задачи'}).click();
+ const project=page.locator('.m1 .task-project-group').filter({hasText:'Демонстрационный проект'});
+ await expect(project).toBeVisible();
+ await expect(project.locator('.task-main')).toContainText('Выполнить 5 шагов учебного проекта');
+ await project.locator(':scope > summary').click();
+ await expect(project.locator('.task-main')).toBeHidden();
+ await project.locator(':scope > summary').click();
+ await expect(project.locator('.task-main')).toBeVisible();
 });

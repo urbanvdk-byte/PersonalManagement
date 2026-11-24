@@ -78,6 +78,20 @@ function loadDemo():Store{
           for(const item of data[kind])item.revision ||= 1;
         for(const item of data.checklist||[])item.revision ||= 1;
         for(const item of data.milestones||[])item.revision ||= 1;
+        // Demo data is local-only; migrate legacy milestones once, retaining originals.
+        const migrated=new Set(data.migrated_milestone_ids||[]);
+        let changed=false;
+        for(const milestone of data.milestones||[]){
+          if(migrated.has(milestone.id))continue;
+          const project=data.projects.find(p=>p.id===milestone.project_id);
+          if(!project)continue;
+          const id=Math.max(0,...data.goals.map(g=>g.id))+1;
+          data.goals.push({id,title:milestone.title,project_id:project.id,area_id:project.area_id,
+            description:'',period_start:null,period_end:milestone.due_date,start_value:0,target_value:1,
+            current_value:0,unit:'',measurable:0,done:milestone.done,revision:1,created_at:new Date().toISOString()});
+          migrated.add(milestone.id);changed=true;
+        }
+        if(changed){data.migrated_milestone_ids=[...migrated];localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}
         return data;
       }
       throw Error('Некорректный формат данных демо');

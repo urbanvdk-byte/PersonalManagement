@@ -40,17 +40,19 @@ test('calendar tomorrow button preserves original time and saves it',async({page
  const now=await state(page);
  expect(now.tasks.find(t=>t.id===task.id).scheduled_at.slice(11,16)).toBe(task.scheduled_at.slice(11,16));
 });
-test('task drawer checklist and project milestone persist without changing master',async({page})=>{
+test('task drawer checklist and quick qualitative goal persist without changing master',async({page})=>{
  await page.goto('/');
  await page.locator('.nav-item',{hasText:'Проекты'}).click();
  await page.locator('.project-entry').first().click();
  const project=page.locator('.project-workspace');
  await expect(project).toBeVisible();
- await project.getByRole('textbox',{name:'Название нового этапа'}).fill('Новый контрольный этап');
+ await project.getByRole('textbox',{name:'Название новой цели'}).fill('Новая цель проекта');
+ await project.locator('.milestone-add input[type=date]').fill('2026-12-07');
  await project.locator('.milestone-add button').click();
- await expect(project).toContainText('Новый контрольный этап');
- const milestone=(await state(page)).milestones.find(m=>m.title==='Новый контрольный этап');
- expect(milestone).toBeDefined();
+ await expect(project).toContainText('Новая цель проекта');
+ const goal=(await state(page)).goals.find(g=>g.title==='Новая цель проекта');
+ expect(goal).toBeDefined();expect(goal.measurable).toBe(0);expect(goal.period_end).toBe('2026-12-07');
+ await expect(project.getByRole('heading',{name:'Этапы и контрольные точки'})).toHaveCount(0);
  await page.getByRole('button',{name:'Все проекты'}).click();
  await page.locator('.nav-item',{hasText:'Все задачи'}).click();
  await page.locator('.task-main').first().click();

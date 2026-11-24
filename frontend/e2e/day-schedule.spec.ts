@@ -61,3 +61,22 @@ test('light theme is applied to sidebar and calendar header',async({page})=>{
  expect(header).toBe('rgb(255, 255, 255)');
  await expect(page.locator('.day-head')).toHaveCount(7);
 });
+
+test('completed tasks and events stay in the day timeline and can be reopened',async({page})=>{
+ await page.goto('/');
+ await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+ const schedule=page.locator('.schedule-page');
+ for(const title of ['Обсудить план проекта','Тестовая встреча']){
+   const complete=schedule.getByRole('button',{name:'Выполнить: '+title,exact:true});
+   await expect(complete).toBeVisible();
+   const entry=complete.locator('xpath=ancestor::div[contains(@class,"schedule-entry") and not(contains(@class,"schedule-entry-card")) and not(contains(@class,"schedule-entry-wrap"))][1]');
+   const time=await entry.locator('.schedule-time-col').innerText();
+   await complete.click();
+   const undo=schedule.getByRole('button',{name:'Отменить выполнение: '+title,exact:true});
+   await expect(undo).toBeVisible();
+   await expect(entry).toHaveClass(/schedule-entry-done/);
+   await expect(entry.locator('.schedule-time-col')).toHaveText(time);
+   await undo.click();
+   await expect(complete).toBeVisible();
+ }
+});

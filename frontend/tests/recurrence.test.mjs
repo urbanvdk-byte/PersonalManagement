@@ -45,3 +45,13 @@ test('until date limits series; split helpers retain local time and date',()=>{
  assert.equal(beforeDate('2027-01-01'),'2026-12-31');
  assert.equal(transferSeriesStart(task,'2026-11-18','2026-11-18T15:30'),'2026-11-16T15:30');
 });
+
+test('history mode retains completed nonrecurring and recurring instances but excludes cancelled ones',()=>{
+ const task={...base,scheduled_at:'2026-11-16T10:00',recurrence:'daily'};
+ const plain={...task,id:2,recurrence:'',status:'done'};
+ const exceptions=[{task_id:1,occurrence_date:'2026-11-16',changes:{status:'done'}},{task_id:1,occurrence_date:'2026-11-17',changes:{status:'cancelled'}}];
+ const view=expandTasks([task,plain],exceptions,'2026-11-16','2026-11-17',true);
+ assert.equal(view.length,2);
+ assert.ok(view.every(t=>t.status==='done'&&t.scheduled_at==='2026-11-16T10:00'));
+ assert.equal(expandTasks([task,plain],exceptions,'2026-11-16','2026-11-17').length,0);
+});

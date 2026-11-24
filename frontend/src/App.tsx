@@ -61,7 +61,23 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
  const invalidTaskDuration=kind==='tasks'&&!isValidTaskDuration(form.duration_minutes??60);
  const missingTitle=!String(form.title??'').trim();
  const preventSave=missingTitle||missingTaskTime||invalidTaskDuration;
- const set=(key:string,value:unknown)=>setForm(v=>({...v,[key]:value}));
+ const set=(key:string,value:unknown)=>setForm(v=>{
+   const next={...v,[key]:value};
+   if(key==='project_id'&&(kind==='tasks'||kind==='goals'||kind==='events')){
+     const project=store.projects.find(p=>p.id===value);
+     if(project&&!next.area_id)next.area_id=project.area_id;
+     if(kind==='tasks'&&next.goal_id){
+       const goal=store.goals.find(g=>g.id===next.goal_id);
+       if(goal?.project_id!=null&&goal.project_id!==value)next.goal_id=null;
+     }
+   }
+   if(key==='goal_id'&&kind==='tasks'){
+     const goal=store.goals.find(g=>g.id===value);
+     if(goal?.project_id!=null)next.project_id=goal.project_id;
+     if(goal&&!next.area_id)next.area_id=goal.area_id??store.projects.find(p=>p.id===goal.project_id)?.area_id??null;
+   }
+   return next;
+ });
  const field=(key:string,label:string,placeholder='')=><label className={'form-field '+(key==='title'&&missingTitle?'required-missing':'')}><span>{label}</span><input value={String(form[key]??'')} placeholder={placeholder} aria-invalid={key==='title'&&missingTitle} onChange={e=>set(key,e.target.value)}/></label>;
  const choices=(key:string,label:string,opts:Record<string,string>)=><label className="form-field"><span>{label}</span><select value={String(form[key]??Object.keys(opts)[0])} onChange={e=>set(key,e.target.value)}>{Object.entries(opts).map(([value,name])=><option key={value} value={value}>{name}</option>)}</select></label>;
  const refs=(key:string,label:string,items:{id:number;title:string}[])=><label className="form-field"><span>{label}</span><select value={String(form[key]??'')} onChange={e=>set(key,e.target.value?Number(e.target.value):null)}><option value="">Не выбрано</option>{items.map(x=><option key={x.id} value={x.id}>{x.title}</option>)}</select></label>;
@@ -230,6 +246,7 @@ function PriorityGroups({tasks,store,edit,toggle,add}:{tasks:Task[];store:Store;
  edit:(e:Editing)=>void;toggle:(task:Task)=>void;add:(priority:number)=>void}){
  const completed=tasks.filter(task=>task.status==='done');
  const cancelled=tasks.filter(task=>task.status==='cancelled');
+ const unassignedGoals=store.goals.filter(goal=>!store.tasks.some(t=>t.goal_id===goal.id));
  return <div className="priority-groups">
   <div className="matrix task-priority-matrix">
    {priorityMeta.map(([title,hint],index)=>{
@@ -255,6 +272,10 @@ function PriorityGroups({tasks,store,edit,toggle,add}:{tasks:Task[];store:Store;
     <summary className="priority-summary"><Check size={19}/><span className="priority-summary-text"><strong>Выполненные</strong><small>История завершённых задач</small></span><span className="priority-count">{completed.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
     <GroupedTaskList tasks={completed} store={store} edit={edit} toggle={toggle} message="Выполненных задач пока нет"/>
   </details>
+  {unassignedGoals.length>0&&<details className="completed-group goals-without-tasks" open>
+    <summary className="priority-summary"><Target size={19}/><span className="priority-summary-text"><strong>Цели без задач</strong><small>Цели, для которых ещё не назначены задачи</small></span><span className="priority-count">{unassignedGoals.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
+    {unassignedGoals.map(goal=><button type="button" key={goal.id} className="project-linked-row" onClick={()=>edit({kind:'goals',record:goal})}><span><strong>{goalDirections(goal,store).map(a=>areaEmoji(a.emoji)).join(' ')} {goal.title}</strong><small>{store.projects.find(p=>p.id===goal.project_id)?.title||'Без проекта'}{goal.period_end?' · До '+fmtDate(goal.period_end):''}</small></span><span>{goalReached(goal)?'Достигнута':goal.measurable!==0?percent(goal)+'%':'В работе'}</span></button>)}
+  </details>}
   {cancelled.length>0&&<details className="completed-group cancelled-group">
     <summary className="priority-summary"><X size={19}/><span className="priority-summary-text"><strong>Отменённые</strong></span><span className="priority-count">{cancelled.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
     <GroupedTaskList tasks={cancelled} store={store} edit={edit} toggle={toggle}/>
@@ -572,7 +593,7 @@ export default function App(){
       <ProjectWorkspace project={selectedProject} store={data} reload={load}
         onBack={()=>setSelectedProjectId(null)}
         onEdit={()=>setEditing({kind:'projects',record:selectedProject})}
-        onCreate={kind=>open(kind,{project_id:selectedProject.id,
+        onCreate={kind=>open(kind,{project_id:selectedProject.id,area_id:selectedProject.area_id,
           ...(kind==='events'?{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'}:{})})}
         onOpenTask={record=>setEditing({kind:'tasks',record})}
         onToggle={toggle}
