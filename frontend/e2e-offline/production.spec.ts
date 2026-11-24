@@ -33,7 +33,7 @@ test('production opens offline, retains edits after reload and syncs them once',
 });
 
 
-test('offline project and its task keep their relationship during ID remapping',async({page,context})=>{
+test('offline project, qualitative goal and task keep their relationships during ID remapping',async({page,context})=>{
  await page.goto('/');
  await expect(page.getByText('Данные синхронизированы')).toBeVisible();
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;});
@@ -42,6 +42,7 @@ test('offline project and its task keep their relationship during ID remapping',
 
  const project='Офлайн связанный проект '+Date.now();
  const task='Задача связанного проекта '+Date.now();
+ const goal='Цель связанного проекта '+Date.now();
  await page.locator('.sidebar').getByRole('button',{name:'Проекты'}).click();
  await page.locator('.content-header').getByRole('button',{name:'Проект'}).click();
  let drawer=page.getByRole('dialog',{name:'Редактирование'});
@@ -50,22 +51,28 @@ test('offline project and its task keep their relationship during ID remapping',
  const card=page.getByRole('button',{name:'Открыть проект '+project});
  await expect(card).toBeVisible();
  await card.click();
+ const goals=page.locator('.project-workspace .project-section').filter({has:page.getByRole('heading',{name:'Цели',exact:true})});
+ await goals.getByRole('textbox',{name:'Название новой цели'}).fill(goal);
+ await goals.locator('input[type=date]').fill('2026-12-07');
+ await goals.getByRole('button',{name:'Добавить',exact:true}).click();
+ await expect(goals.getByText(goal,{exact:true})).toBeVisible();
 
  await page.locator('.project-workspace .project-section').filter({
   has:page.getByRole('heading',{name:'Задачи'})
  }).getByRole('button',{name:'Задача'}).click();
  drawer=page.getByRole('dialog',{name:'Редактирование'});
  await drawer.locator('input').first().fill(task);
+ await drawer.getByLabel('Цель',{exact:true}).selectOption({label:goal});
  await drawer.getByRole('button',{name:'Сохранить'}).click();
  await expect(page.locator('.project-workspace .task-list').getByText(task).first()).toBeVisible();
- await expect(page.getByText('2 изменений ожидают отправки')).toBeVisible();
+ await expect(page.getByText('3 изменений ожидают отправки')).toBeVisible();
 
  await context.setOffline(false);
  await expect(page.getByText('Данные синхронизированы')).toBeVisible({timeout:30_000});
  const remote=await page.evaluate(async()=>{
   const response=await fetch('/api/bootstrap',{cache:'no-store'});
   if(!response.ok)throw Error('bootstrap '+response.status);
-  return await response.json() as {projects:Array<{id:number;title:string}>;tasks:Array<{id:number;title:string;project_id:number|null}>};
+  return await response.json() as {projects:Array<{id:number;title:string}>;goals:Array<{id:number;title:string;project_id:number|null;measurable:number;period_end:string}>;tasks:Array<{id:number;title:string;project_id:number|null;goal_id:number|null}>};
  });
  const found=remote.projects.filter(x=>x.title===project);
  expect(found).toHaveLength(1);
@@ -73,6 +80,12 @@ test('offline project and its task keep their relationship during ID remapping',
  const linked=remote.tasks.filter(x=>x.title===task);
  expect(linked).toHaveLength(1);
  expect(linked[0].project_id).toBe(found[0].id);
+ const target=remote.goals.filter(x=>x.title===goal);
+ expect(target).toHaveLength(1);
+ expect(target[0].project_id).toBe(found[0].id);
+ expect(target[0].measurable).toBe(0);
+ expect(target[0].period_end).toBe('2026-12-07');
+ expect(linked[0].goal_id).toBe(target[0].id);
 });
 
 
