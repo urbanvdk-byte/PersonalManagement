@@ -53,7 +53,7 @@ def test_validation(tmp_path, monkeypatch):
         assert client.post("/api/tasks", headers=auth(), json={"title": "X", "priority": 9}).status_code == 422
         assert client.post("/api/tasks", headers=auth(), json={"title": "X", "oops": True}).status_code == 422
         assert client.post("/api/tasks", headers=auth(), json={"title": "X", "area_id": 999, "scheduled_at": "2026-11-19T09:00"}).status_code == 409
-        assert client.post("/api/events", headers=auth(), json={"title": "Встреча", "starts_at": "2026-11-19T12:00", "ends_at": "2026-11-19T11:00"}).status_code == 422
+        assert client.post("/api/events", headers=auth(), json={"title": "Встреча", "starts_at": "2026-11-19T12:00", "ends_at": "2026-11-19T11:00"}).status_code == 410
 
 
 def test_task_colors_and_area_emoji(tmp_path, monkeypatch):
@@ -186,7 +186,6 @@ def test_multiple_project_directions_and_related_entities(tmp_path,monkeypatch):
         assert proj["area_id"]==a
         task=client.post("/api/tasks",headers=auth(),json={"title":"Без расписания","project_id":proj["id"]}).json()
         goal=client.post("/api/goals",headers=auth(),json={"title":"Измеримый результат","project_id":proj["id"]}).json()
-        event=client.post("/api/events",headers=auth(),json={"title":"Встреча","project_id":proj["id"],"starts_at":"2026-12-01T10:00","ends_at":"2026-12-01T11:00"}).json()
         assert task["scheduled_at"] is None
         assert client.get("/api/bootstrap",headers=auth()).json()["projects"][0]["area_ids"]==[a,b]
         assert client.get("/api/export",headers=auth()).json()["data"]["projects"][0]["area_ids"]==[a,b]
@@ -199,7 +198,6 @@ def test_multiple_project_directions_and_related_entities(tmp_path,monkeypatch):
         result=client.get("/api/bootstrap",headers=auth()).json()
         assert next(t for t in result["tasks"] if t["id"]==task["id"])["project_id"] is None
         assert next(t for t in result["goals"] if t["id"]==goal["id"])["project_id"] is None
-        assert next(t for t in result["events"] if t["id"]==event["id"])["project_id"] is None
 
 def test_legacy_project_area_migration_preserves_links(tmp_path,monkeypatch):
     from app import SCHEMA
@@ -255,18 +253,30 @@ def test_project_milestones_checklist_activity_and_cascade(tmp_path,monkeypatch)
         assert not any(m["project_id"]==project["id"] for m in data["milestones"])
 
 
-def test_partial_event_update_rejects_invalid_interval(tmp_path,monkeypatch):
-    monkeypatch.setenv("APP_PASSWORD", "local-test-secret")
+def test_legacy_events_migrate_to_tasks_without_duplicates(monkeypatch):
+    from app import setup, connection
+    import uuid
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    setup()
+    with connection() as conn:
+        event=conn.execute("INSERT INTO events(title,starts_at,ends_at,done) VALUES (%s,%s,%s,1) RETURNING id",("Старая встреча","2026-11-23T10:00","2026-11-23T11:00")).fetchone()
+    setup()
+    setup()
     with TestClient(app) as client:
-        event=client.post("/api/events",headers=auth(),json={
-            "title":"Встреча","starts_at":"2026-11-23T10:00","ends_at":"2026-11-23T11:00"
-        }).json()
-        address=f'/api/events/{event["id"]}'
-        assert client.patch(address,headers=auth(),json={"starts_at":"2026-11-23T12:00"}).status_code==422
-        assert client.patch(address,headers=auth(),json={"ends_at":"2026-11-23T09:00"}).status_code==422
-        assert client.patch(address,headers=auth(),json={"starts_at":"2026-11-23T09:30"}).status_code==200
-        remaining=client.get("/api/bootstrap",headers=auth()).json()["events"][0]
-        assert remaining["starts_at"]=="2026-11-23T09:30" and remaining["ends_at"]=="2026-11-23T11:00"
+        data=client.get("/api/bootstrap",headers=auth()).json()
+        assert "events" not in data
+        tasks=[t for t in data["tasks"] if t["title"]=="Старая встреча"]
+        assert len(tasks)==1 and tasks[0]["status"]=="done"
+        assert tasks[0]["scheduled_at"]=="2026-11-23T10:00" and tasks[0]["duration_minutes"]==60
+        op={"operation_id":str(uuid.uuid4()),"kind":"events","action":"save","item_id":event["id"],"values":{"done":0}}
+        res=client.post("/api/offline/execute",headers={**auth(),"If-Match":"1"},json=op)
+        assert res.status_code==200,res.text
+        assert client.post("/api/offline/execute",headers={**auth(),"If-Match":"1"},json=op).status_code==200
+        task=next(t for t in client.get("/api/bootstrap",headers=auth()).json()["tasks"] if t["id"]==tasks[0]["id"])
+        assert task["status"]=="planned"
+        assert client.delete(f'/api/tasks/{task["id"]}',headers={**auth(),"If-Match":str(task["revision"])}).status_code==204
+        setup()
+        assert not client.get("/api/bootstrap",headers=auth()).json()["tasks"]
 
 
 def test_concurrent_tab_revision_rejects_stale_edits_and_delete(tmp_path,monkeypatch):
@@ -403,9 +413,9 @@ def test_unified_goals_and_event_completion(monkeypatch):
         response=client.post("/api/goals",headers=auth(),json={"title":"Простая цель","project_id":project["id"],"period_end":"2026-12-08","measurable":0,"done":0})
         assert response.status_code==201,response.text
         assert response.json()["measurable"]==0
-        event=client.post("/api/events",headers=auth(),json={"title":"Тест","starts_at":"2026-11-24T18:30","ends_at":"2026-11-24T19:30"}).json()
-        op={"operation_id":str(__import__("uuid").uuid4()),"action":"save","kind":"events","item_id":event["id"],"values":{"done":1}}
-        res=client.post("/api/offline/execute",headers={**auth(),"If-Match":str(event["revision"])},json=op)
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Тест","scheduled_at":"2026-11-24T18:30","duration_minutes":60}).json()
+        op={"operation_id":str(__import__("uuid").uuid4()),"action":"save","kind":"tasks","item_id":task["id"],"values":{"status":"done"}}
+        res=client.post("/api/offline/execute",headers={**auth(),"If-Match":str(task["revision"])},json=op)
         assert res.status_code==200,res.text
-        saved=next(e for e in client.get("/api/bootstrap",headers=auth()).json()["events"] if e["id"]==event["id"])
-        assert saved["done"]==1 and saved["starts_at"]==event["starts_at"]
+        saved=next(t for t in client.get("/api/bootstrap",headers=auth()).json()["tasks"] if t["id"]==task["id"])
+        assert saved["status"]=="done" and saved["scheduled_at"]==task["scheduled_at"]

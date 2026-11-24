@@ -51,21 +51,16 @@ def occurrence_rows(conn,day:str)->list[dict]:
 def report(conn,mode:str,now:datetime)->tuple[str,str]:
     day=now.date().isoformat()
     scheduled=occurrence_rows(conn,day)
-    events=[dict(r) for r in conn.execute("SELECT * FROM events WHERE substr(starts_at,1,10)=%s ORDER BY starts_at",(day,))]
     if mode=="morning":
         important=sorted(scheduled,key=lambda t:(t["priority"],t["scheduled_at"]))[:3]
         overdue=conn.execute("""SELECT count(*) FROM tasks
           WHERE status NOT IN ('done','cancelled') AND due_at IS NOT NULL
           AND substr(due_at,1,10) < %s""",(day,)).fetchone()["count"]
         load=sum(int(t["duration_minutes"]) for t in scheduled)
-        load+=sum(max(0,int((datetime.fromisoformat(e["ends_at"])-datetime.fromisoformat(e["starts_at"])).total_seconds()/60)) for e in events)
         lines=["☀️ План на "+now.strftime("%d.%m.%Y"),
                "Главные задачи:"]
         lines.extend(f"• P{t['priority']} {t['scheduled_at'][11:16]} {t['title']}" for t in important)
         if not important:lines.append("• Запланированных задач нет")
-        if events:
-            lines.append("Встречи:")
-            lines.extend(f"• {e['starts_at'][11:16]} {e['title']}" for e in events[:8])
         lines.append(f"Загрузка: {load//60} ч {load%60:02d} мин"+(" ⚠️ Перегрузка" if load>8*60 else ""))
         lines.append(f"Просрочено: {overdue}")
         return "morning:"+day,"\n".join(lines)
@@ -87,12 +82,6 @@ def report(conn,mode:str,now:datetime)->tuple[str,str]:
             if 10<=minutes<=15:
                 upcoming.append(("task:"+str(task["id"])+":"+task["scheduled_at"],
                                  f"⏰ Через {round(minutes)} мин: P{task['priority']} {task['title']}"))
-        for event in events:
-            dt=datetime.fromisoformat(event["starts_at"]).replace(tzinfo=now.tzinfo)
-            minutes=(dt-now).total_seconds()/60
-            if 10<=minutes<=15:
-                upcoming.append(("event:"+str(event["id"])+":"+event["starts_at"],
-                                 f"📅 Через {round(minutes)} мин: {event['title']}"))
         if not upcoming:return "", ""
         # The caller handles each reminder separately, for durable dedup.
         return json.dumps(upcoming,ensure_ascii=False),""

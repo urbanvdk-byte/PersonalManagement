@@ -13,8 +13,8 @@ def test_telegram_previews_and_idempotency(tmp_path,monkeypatch):
                         VALUES ('Важное дело',1,'planned','2026-11-20T09:00',60)""")
         conn.execute("""INSERT INTO tasks(title,priority,status,scheduled_at,duration_minutes)
                         VALUES ('Ещё одно',2,'planned','2026-11-20T12:00',45)""")
-        conn.execute("""INSERT INTO events(title,starts_at,ends_at)
-                        VALUES ('Встреча','2026-11-20T11:00','2026-11-20T12:00')""")
+        conn.execute("""INSERT INTO tasks(title,priority,status,scheduled_at,duration_minutes)
+                        VALUES ('Встреча',3,'planned','2026-11-20T11:00',60)""")
         now=datetime(2026,11,20,8,0,tzinfo=ZoneInfo("Europe/Moscow"))
         key,morning=report(conn,"morning",now)
         assert key=="morning:2026-11-20"

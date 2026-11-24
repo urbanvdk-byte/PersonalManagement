@@ -225,10 +225,52 @@ def setup() -> None:
             goal_id INTEGER REFERENCES goals(id) ON DELETE SET NULL,
             goal_revision INTEGER NOT NULL DEFAULT 1
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS event_task_migration (
+            event_id INTEGER PRIMARY KEY,
+            task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+            task_revision INTEGER NOT NULL DEFAULT 1
+        )""")
+        for event in conn.execute("""SELECT e.* FROM events e
+            LEFT JOIN event_task_migration m ON m.event_id=e.id
+            WHERE m.event_id IS NULL ORDER BY e.id""").fetchall():
+            migrate_event(conn,event)
         for row in conn.execute("""SELECT m.* FROM project_milestones m
             LEFT JOIN milestone_goal_migration l ON l.milestone_id=m.id
             WHERE l.milestone_id IS NULL ORDER BY m.id""").fetchall():
             migrate_milestone(conn,row)
+
+
+def event_task_values(event):
+    minutes=(datetime.fromisoformat(event["ends_at"])-datetime.fromisoformat(event["starts_at"])).total_seconds()/60
+    duration=max(30,min(1440,int((minutes+14.999999)//15)*15))
+    color=event["color"].lower()
+    if color not in TASK_COLORS:
+        rgb=lambda value: tuple(int(value[i:i+2],16) for i in (1,3,5))
+        original=rgb(color)
+        color=min(sorted(TASK_COLORS),key=lambda value:sum((a-b)**2 for a,b in zip(original,rgb(value))))
+    return {"title":event["title"],"notes":event["notes"],"area_id":event["area_id"],
+            "project_id":event["project_id"],"scheduled_at":event["starts_at"],
+            "duration_minutes":duration,"color":color,"status":"done" if event["done"] else "planned"}
+
+
+def migrate_event(conn,event):
+    values=event_task_values(event)
+    cols=", ".join(values)
+    params=", ".join("%s" for _ in values)
+    task=conn.execute(f"INSERT INTO tasks ({cols},created_at) VALUES ({params},%s) RETURNING id,revision",
+                      (*values.values(),event["created_at"])).fetchone()
+    conn.execute("INSERT INTO event_task_migration(event_id,task_id,task_revision) VALUES (%s,%s,%s)",
+                 (event["id"],task["id"],task["revision"]))
+
+
+def legacy_event_task(conn,event_id):
+    row=conn.execute("SELECT task_id,task_revision FROM event_task_migration WHERE event_id=%s",(event_id,)).fetchone()
+    if not row or row["task_id"] is None:
+        raise HTTPException(409,"Событие уже удалено или преобразовано. Обновите данные.")
+    task=fetch_one(conn,"tasks",row["task_id"])
+    if task["revision"]!=row["task_revision"]:
+        raise HTTPException(409,CONFLICT_MESSAGE)
+    return task
 
 
 def migrate_milestone(conn,row):
@@ -458,7 +500,7 @@ def bootstrap():
     with connection() as conn:
         data = {
             name: [dict(r) for r in conn.execute(f"SELECT * FROM {name} ORDER BY id DESC")]
-            for name in FIELDS
+            for name in FIELDS if name!="events"
         }
         data["projects"]=[project_with_areas(conn,row) for row in data["projects"]]
         data.update(extra_data(conn))
@@ -471,6 +513,8 @@ def bootstrap():
 
 @app.post("/api/{kind}", status_code=201)
 def create(kind: str, payload: dict[str, Any]):
+    if kind=="events" and _ACTIVE_REPLAY_CONNECTION.get() is None:
+        raise HTTPException(410,"События заменены задачами")
     values = validate(kind, payload.copy(), creating=True)
     if not values:
         raise HTTPException(422, "Пустой запрос")
@@ -487,6 +531,8 @@ def create(kind: str, payload: dict[str, Any]):
             if kind=="projects":
                 for area_id in (areas if areas is not None else ([values["area_id"]] if values.get("area_id") else [])):
                     conn.execute("INSERT INTO project_areas(project_id,area_id) VALUES (%s,%s)",(new_id,area_id))
+            if kind=="events":
+                migrate_event(conn,fetch_one(conn,"events",new_id))
             project_id=new_id if kind=="projects" else values.get("project_id")
             record_activity(conn,project_id,"Создано: "+str(values.get("title","")))
         except psycopg.IntegrityError as exc:
@@ -495,6 +541,8 @@ def create(kind: str, payload: dict[str, Any]):
 
 @app.patch("/api/{kind}/{item_id}")
 def update(kind: str, item_id: int, payload: dict[str, Any], request: Request):
+    if kind=="events" and _ACTIVE_REPLAY_CONNECTION.get() is None:
+        raise HTTPException(410,"События заменены задачами")
     values = validate(kind, payload.copy())
     areas=values.pop("area_ids",None) if kind=="projects" else None
     if kind=="projects" and areas is not None:
@@ -507,6 +555,7 @@ def update(kind: str, item_id: int, payload: dict[str, Any], request: Request):
         if kind=="events":
             merged={**previous,**values}
             validate_event_interval(merged["starts_at"],merged["ends_at"])
+            linked_task=legacy_event_task(conn,item_id)
         if values or areas is not None:
             if kind == "tasks":
                 values["updated_at"] = datetime.now().isoformat(timespec="seconds")
@@ -521,6 +570,11 @@ def update(kind: str, item_id: int, payload: dict[str, Any], request: Request):
                     conn.execute("DELETE FROM project_areas WHERE project_id=%s",(item_id,))
                     for area_id in selected:
                         conn.execute("INSERT INTO project_areas(project_id,area_id) VALUES (%s,%s)",(item_id,area_id))
+                if kind=="events":
+                    converted=event_task_values(merged)
+                    assignments=", ".join(f"{col}=%s" for col in converted)
+                    conn.execute(f"UPDATE tasks SET {assignments},revision=revision+1 WHERE id=%s",(*converted.values(),linked_task["id"]))
+                    conn.execute("UPDATE event_task_migration SET task_revision=task_revision+1 WHERE event_id=%s",(item_id,))
                 target=item_id if kind=="projects" else values.get("project_id",previous.get("project_id"))
                 record_activity(conn,target,"Обновлено: "+str(values.get("title",previous.get("title",""))))
             except psycopg.IntegrityError as exc:
@@ -529,12 +583,17 @@ def update(kind: str, item_id: int, payload: dict[str, Any], request: Request):
 
 @app.delete("/api/{kind}/{item_id}", status_code=204)
 def delete(kind: str, item_id: int, request: Request):
+    if kind=="events" and _ACTIVE_REPLAY_CONNECTION.get() is None:
+        raise HTTPException(410,"События заменены задачами")
     if kind not in FIELDS:
         raise HTTPException(404, "Неизвестный тип записи")
     with connection() as conn:
         begin_immediate(conn)
         previous=fetch_one(conn, kind, item_id)
         require_current_revision(request,previous)
+        if kind=="events":
+            task=legacy_event_task(conn,item_id)
+            conn.execute("DELETE FROM tasks WHERE id=%s",(task["id"],))
         conn.execute(f"DELETE FROM {kind} WHERE id = %s", (item_id,))
         if kind!="projects":
             record_activity(conn,previous.get("project_id"),"Удалено: "+previous["title"])
@@ -873,7 +932,7 @@ def export():
             "version": 1,
             "data": {
                 kind: [dict(r) for r in conn.execute(f"SELECT * FROM {kind} ORDER BY id")]
-                for kind in FIELDS
+                for kind in FIELDS if kind!="events"
             },
         }
         payload["data"]["projects"]=[project_with_areas(conn,row) for row in payload["data"]["projects"]]
