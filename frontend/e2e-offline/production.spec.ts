@@ -108,11 +108,11 @@ test('approved branding assets load, hide on mobile, and define home-screen icon
  const guest=await apiRequest.newContext();
  try{
   for(const path of ['manifest-v2.webmanifest','favicon-v2-32.png','brand-icon-v2-192.png','brand-icon-v2-512.png']){
-   const res=await guest.get('http://127.0.0.1:3000/'+path);
+   const res=await guest.get('http://127.0.0.1:3000/'+path,{headers:{Authorization:'Bearer invalid-public-asset-check'}});
    expect(res.status(),path+' should be public to Android Chrome').toBe(200);
    expect((await res.body()).length).toBeGreaterThan(100);
   }
-  const privateData=await guest.get('http://127.0.0.1:3000/api/bootstrap');
+  const privateData=await guest.get('http://127.0.0.1:3000/api/bootstrap',{headers:{Authorization:'Bearer invalid-public-asset-check'}});
   expect(privateData.status(),'Private API must require password').toBe(401);
  } finally {
   await guest.dispose();
