@@ -413,3 +413,19 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
 .pm-sidebar-logo{display:flex;align-items:center;margin:0 0 17px 12px;height:38px}
 .pm-sidebar-logo img{width:36px;height:36px;object-fit:contain;display:block}
 @media(max-width:760px){.pm-sidebar-logo{display:none!important}}
+
+/* Project / goal hierarchy and completed timeline entries. */
+.task-project-group{margin:5px 0;border:1px solid var(--pm-line);border-radius:9px;overflow:hidden}
+.task-project-group>summary{list-style:none;display:flex;align-items:center;gap:7px;padding:6px 9px;background:#f7f7f4;cursor:pointer;font-size:12px;min-height:29px}
+.task-project-group>summary::-webkit-details-marker{display:none}
+.task-project-group[open]>summary>svg{transform:rotate(90deg)}
+.task-project-group>summary strong{font-weight:650;flex:1}
+.task-project-group>summary small{color:var(--pm-muted)}
+.task-goal-group{padding:0 8px}
+.task-goal-heading{display:flex;align-items:center;gap:6px;border:0;background:none;padding:7px 4px 0;font-size:11px;color:#a66a3d;text-align:left}
+.project-goal-row{display:flex;align-items:center;gap:8px;border-top:1px solid var(--pm-line)}
+.project-goal-row>.project-linked-row{flex:1;min-width:0;border-top:0}
+.schedule-entry-done .schedule-entry-card{background:#f2f2f0!important;border-color:#c8c9c6!important;color:#858782!important;box-shadow:none!important}
+.schedule-entry-done .schedule-card-title,.schedule-entry-done .schedule-card-meta,.schedule-entry-done .schedule-time-col,.schedule-entry-done .schedule-card-tags{color:#858782!important}
+.schedule-entry-done .schedule-track-icon{filter:grayscale(1);opacity:.65}
+.schedule-entry-done .schedule-complete.is-done{background:#969994!important;border-color:#969994!important;color:white!important}
