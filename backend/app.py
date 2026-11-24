@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS activity_log (
   message TEXT NOT NULL,
   happened_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
 );
+CREATE TABLE IF NOT EXISTS telegram_report_outbox (
+  message_key TEXT PRIMARY KEY,
+  message TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS telegram_sent (
   message_key TEXT PRIMARY KEY,
   sent_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
@@ -293,6 +297,19 @@ def legacy_goal(conn,milestone_id):
 @app.on_event("startup")
 def startup() -> None:
     setup()
+    if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
+        from threading import Event, Thread
+        from telegram_digest import run_scheduler
+        app.state.telegram_stop = Event()
+        app.state.telegram_thread = Thread(target=run_scheduler,args=(app.state.telegram_stop,),daemon=True)
+        app.state.telegram_thread.start()
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    stop = getattr(app.state,"telegram_stop",None)
+    if stop is not None:
+        stop.set()
+        app.state.telegram_thread.join(timeout=2)
 
 def auth_client_key(request: Request) -> str:
     # Trust only request.client.host, not a visitor-supplied forwarded header.
