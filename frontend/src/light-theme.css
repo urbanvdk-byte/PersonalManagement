@@ -429,3 +429,8 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
 .schedule-entry-done .schedule-card-title,.schedule-entry-done .schedule-card-meta,.schedule-entry-done .schedule-time-col,.schedule-entry-done .schedule-card-tags{color:#858782!important}
 .schedule-entry-done .schedule-track-icon{filter:grayscale(1);opacity:.65}
 .schedule-entry-done .schedule-complete.is-done{background:#969994!important;border-color:#969994!important;color:white!important}
+
+/* Compact switches in the full goal/event editor. */
+.form-field>span:has(>input[type="checkbox"]){display:flex;align-items:center;gap:8px}
+.form-field>span>input[type="checkbox"]{width:16px;height:16px;flex:0 0 16px;padding:0;margin:0;accent-color:var(--pm-orange)}
+.project-goal-row>input[type="checkbox"]{flex:none;accent-color:var(--pm-orange)}
