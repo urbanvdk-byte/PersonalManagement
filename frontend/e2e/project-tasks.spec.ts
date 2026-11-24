@@ -57,7 +57,7 @@ test('project opens its container; multi-direction edit is separate',async({page
  await expect(container).toContainText('Много направлений');
  await expect(page.locator('.drawer')).toHaveCount(0);
  await expect(container.locator('.project-area-tag')).toHaveCount(2);
- await expect(container).toContainText('События');
+ await expect(container.getByRole('heading',{name:'События',exact:true})).toHaveCount(0);
  await container.getByRole('button',{name:'Редактировать проект'}).click();
  await expect(page.locator('.drawer')).toBeVisible();
  await page.locator('.project-areas-picker input').nth(0).uncheck();

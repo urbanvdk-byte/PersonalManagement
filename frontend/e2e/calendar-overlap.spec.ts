@@ -41,9 +41,7 @@ test('simultaneous tasks and a meeting form readable, non-overlapping columns',a
    for(const name of extra){
      store.tasks.push({...first,id:++max,title:name,scheduled_at:day+'T10:00',duration_minutes:60});
    }
-   const evt=store.events[0];
-   store.events.push({...evt,id:Math.max(...store.events.map(e=>e.id))+1,title:'Пересечение встреча',
-     starts_at:day+'T10:00',ends_at:day+'T11:00'});
+   store.tasks.push({...first,id:++max,title:'Пересечение встреча',scheduled_at:day+'T10:00',duration_minutes:60});
    localStorage.setItem(key,JSON.stringify(store));
    return day;
  },KEY);

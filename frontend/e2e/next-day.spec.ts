@@ -16,10 +16,11 @@ async function injectSchedule(page,repeat=false){
    const mon=keyFor(0),tue=keyFor(1),wed=keyFor(2);
    Object.assign(data.tasks[0],{title:'Поесть',status:'planned',scheduled_at:mon+'T17:00',
      duration_minutes:60,recurrence:repeat?'daily':'',recurrence_until:null});
-   Object.assign(data.events[1],{title:'Личное время',starts_at:mon+'T19:00',ends_at:mon+'T20:00'});
+   const meeting=data.tasks.find(t=>t.title==='Личное время');
+   Object.assign(meeting,{scheduled_at:mon+'T19:00',duration_minutes:60});
    data.occurrences=[];
    localStorage.setItem(key,JSON.stringify(data));
-   return {mon,tue,wed,taskId:data.tasks[0].id,eventId:data.events[1].id};
+   return {mon,tue,wed,taskId:data.tasks[0].id,eventId:meeting.id};
  },{key:KEY,repeat});
 }
 test('arrow works every time: Поесть 20 -> 21 -> 22, retaining 17:00',async({page})=>{
@@ -42,13 +43,13 @@ test('event also has arrow: moving Личное время repeatedly preserves 
  const btn=page.getByRole('button',{name:'Перенести на следующий день: Личное время'});
  await btn.scrollIntoViewIfNeeded();
  await btn.click();
- await expect.poll(async()=> (await getStore(page)).events.find(e=>e.id===dates.eventId).starts_at)
+ await expect.poll(async()=> (await getStore(page)).tasks.find(e=>e.id===dates.eventId).scheduled_at)
    .toBe(stamp(dates.tue,'19:00'));
  await btn.scrollIntoViewIfNeeded();
  await btn.click();
- await expect.poll(async()=> (await getStore(page)).events.find(e=>e.id===dates.eventId).starts_at)
+ await expect.poll(async()=> (await getStore(page)).tasks.find(e=>e.id===dates.eventId).scheduled_at)
    .toBe(stamp(dates.wed,'19:00'));
- expect((await getStore(page)).events.find(e=>e.id===dates.eventId).ends_at).toBe(stamp(dates.wed,'20:00'));
+ expect((await getStore(page)).tasks.find(e=>e.id===dates.eventId).duration_minutes).toBe(60);
 });
 test('daily recurrence: moving original instance twice updates only that exception',async({page})=>{
  const dates=await injectSchedule(page,true);

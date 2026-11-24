@@ -62,7 +62,7 @@ test('light theme is applied to sidebar and calendar header',async({page})=>{
  await expect(page.locator('.day-head')).toHaveCount(7);
 });
 
-test('completed tasks and events stay in the day timeline and can be reopened',async({page})=>{
+test('completed tasks and meetings stay in the day timeline and can be reopened',async({page})=>{
  await page.goto('/');
  await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
  const schedule=page.locator('.schedule-page');
