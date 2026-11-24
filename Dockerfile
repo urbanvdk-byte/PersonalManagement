@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 WORKDIR /usr/src/personalmanagement
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-COPY backend/app.py backend/telegram_digest.py ./
+COPY backend/app.py backend/telegram_digest.py backend/push_reminders.py ./
 COPY --from=webbuild /web/dist/ ./static/
 # Bothost may mount source files on /app; code stays outside this directory.
 # Database credentials arrive only through Bothost's DATABASE_URL variable.

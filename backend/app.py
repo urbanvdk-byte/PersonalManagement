@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS activity_log (
   message TEXT NOT NULL,
   happened_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
 );
+CREATE TABLE IF NOT EXISTS push_vapid (
+  id INTEGER PRIMARY KEY CHECK(id=1), private_key TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY, subscription TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_sent (
+  endpoint TEXT REFERENCES push_subscriptions(endpoint) ON DELETE CASCADE,
+  reminder_key TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(endpoint,reminder_key)
+);
 CREATE TABLE IF NOT EXISTS telegram_report_outbox (
   message_key TEXT PRIMARY KEY,
   message TEXT NOT NULL
@@ -297,6 +309,11 @@ def legacy_goal(conn,milestone_id):
 @app.on_event("startup")
 def startup() -> None:
     setup()
+    from threading import Event, Thread
+    from push_reminders import run_push_scheduler
+    app.state.push_stop = Event()
+    app.state.push_thread = Thread(target=run_push_scheduler,args=(app.state.push_stop,),daemon=True)
+    app.state.push_thread.start()
     if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
         from threading import Event, Thread
         from telegram_digest import run_scheduler
@@ -306,6 +323,10 @@ def startup() -> None:
 
 @app.on_event("shutdown")
 def shutdown() -> None:
+    push_stop = getattr(app.state,"push_stop",None)
+    if push_stop is not None:
+        push_stop.set()
+        app.state.push_thread.join(timeout=2)
     stop = getattr(app.state,"telegram_stop",None)
     if stop is not None:
         stop.set()
@@ -960,6 +981,34 @@ def export():
             for r in conn.execute("SELECT * FROM task_occurrences ORDER BY occurrence_date")
         ]
     return JSONResponse(payload, headers={"Content-Disposition": 'attachment; filename="personalmanagement-export.json"', "Cache-Control": "no-store"})
+
+@app.get("/api/push/key")
+def push_key():
+    from push_reminders import public_key
+    with connection() as conn:
+        return JSONResponse({"publicKey":public_key(conn)},headers={"Cache-Control":"no-store"})
+
+@app.put("/api/push/subscription")
+def subscribe_push(payload:dict[str,Any]):
+    from push_reminders import validate_subscription
+    try:
+        subscription=validate_subscription(payload)
+    except (ValueError,TypeError):
+        raise HTTPException(422,"Некорректная подписка на уведомления")
+    with connection() as conn:
+        conn.execute("""INSERT INTO push_subscriptions(endpoint,subscription) VALUES (%s,%s)
+          ON CONFLICT(endpoint) DO UPDATE SET subscription=excluded.subscription""",
+          (subscription["endpoint"],json.dumps(subscription)))
+    return {"ok":True}
+
+@app.delete("/api/push/subscription",status_code=204)
+def unsubscribe_push(payload:dict[str,Any]):
+    endpoint=payload.get("endpoint")
+    if not isinstance(endpoint,str) or len(endpoint)>4096:
+        raise HTTPException(422,"Некорректная подписка")
+    with connection() as conn:
+        conn.execute("DELETE FROM push_subscriptions WHERE endpoint=%s",(endpoint,))
+    return Response(status_code=204)
 
 @app.get("/{path:path}", include_in_schema=False)
 def frontend(path: str):
