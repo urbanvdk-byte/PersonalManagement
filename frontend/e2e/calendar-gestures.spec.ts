@@ -82,6 +82,7 @@ test('phone long press moves task but a short tap opens editor',async({browser})
   const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
   const page=await context.newPage();
   await page.goto('/');
+  await page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'Календарь',exact:true}).click();
   const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
   await revealTask(task);
   const box=await task.boundingBox();
@@ -106,6 +107,7 @@ test('phone long press on bottom edge increases duration by one quarter hour',as
   const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
   const page=await context.newPage();
   await page.goto('/');
+  await page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'Календарь',exact:true}).click();
   const task=page.locator('.cal-item.task-block',{hasText:taskTitle}).first();
   await revealTask(task);
   const box=await task.boundingBox();

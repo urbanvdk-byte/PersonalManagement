@@ -4,6 +4,7 @@ test('mobile hours and left header stay visible during horizontal day scrolling'
  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
  const page=await context.newPage();
  await page.goto('/');
+ await page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'Календарь',exact:true}).click();
  const scroller=page.locator('.calendar-scroll');
  await expect(scroller).toBeVisible();
  // The app auto-centers the current day. Start from a known horizontal origin.

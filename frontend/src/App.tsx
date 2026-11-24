@@ -343,7 +343,7 @@ function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTas
  </section>;
 }
 export default function App(){
- const [data,setData]=useState<Store>(empty);const [page,setPage]=useState<Page>('calendar');
+ const [data,setData]=useState<Store>(empty);const [page,setPage]=useState<Page>(()=>window.matchMedia('(max-width:760px)').matches?'schedule':'calendar');
  const [selectedDay,setSelectedDay]=useState(dayKey(new Date()));
  const [displayMonth,setDisplayMonth]=useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1));
  const [period,setPeriod]=useState<DateSelection>({start:null,end:null});

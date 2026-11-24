@@ -7,6 +7,7 @@ test('mobile calendar starts centered on today and actions stay on one row',asyn
  await page.clock.install({time:PINNED});
  await page.setViewportSize({width:390,height:844});
  await page.goto('/');
+ await page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'Календарь',exact:true}).click();
  const scroller=page.locator('.calendar-scroll');
  const today=page.locator('.day-head.selected');
  await expect(today).toContainText('19');
@@ -71,3 +72,15 @@ test('opening daily schedule from another selected day returns to today and its 
  await expect(page.locator('.schedule-current-date')).toContainText('19');
  await expect(page.locator('.schedule-now-marker')).toHaveCount(1);
 });
+
+ test('mobile starts on today schedule while desktop starts on calendar',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.goto('/');
+ await expect(page.locator('.schedule-page')).toBeVisible();
+ await expect(page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'День',exact:true})).toHaveAttribute('aria-current','page');
+ await expect(page.locator('.calendar-scroll')).toHaveCount(0);
+ await page.setViewportSize({width:1280,height:900});
+ await expect(page.locator('.schedule-page')).toBeVisible();
+ await page.reload();
+ await expect(page.locator('.calendar-scroll')).toBeVisible();
+ });
