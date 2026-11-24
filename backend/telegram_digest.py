@@ -130,7 +130,7 @@ def report(conn, mode, now):
     areas = {r["id"]: r["title"] for r in conn.execute("SELECT id,title FROM areas")}
     if mode == "weekly":
         start = today - timedelta(days=today.weekday())
-        end = start + timedelta(days=6)
+        end = start + timedelta(days=4)
         # Manual previews on earlier days show only elapsed days.
         through = min(today, end)
         rows = period_rows(tasks, exceptions, start, through)
@@ -251,7 +251,7 @@ def due_modes(now):
     modes = []
     if clock >= (8,0):
         modes.append("morning")
-    if now.weekday() == 6 and clock >= (20,0):
+    if now.weekday() == 4 and clock >= (21,0):
         modes.append("weekly")
     if now.day == 1 and clock >= (8,5):
         modes.append("monthly")

@@ -24,10 +24,12 @@ def test_reports_and_recurrence(monkeypatch):
         key,morning=report(conn,"morning",at("2026-11-20T08:00"))
         assert key=="morning:2026-11-20"
         assert "Важное дело" in morning and "Тренировка" in morning and "Без времени: 1, из них P1: 1" in morning
-        key,weekly=report(conn,"weekly",at("2026-11-22T20:00"))
+        key,weekly=report(conn,"weekly",at("2026-11-20T21:00"))
         assert key=="weekly:2026-11-16"
-        assert "Запланировано: 9 · выполнено: 3 (33%)" in weekly
-        assert "Работа: 1 ч 45 мин" in weekly
+        assert "Запланировано: 6 · выполнено: 2 (33%)" in weekly
+        assert "Работа: 1 ч 00 мин" in weekly
+        assert "Сб" not in weekly and "Вс" not in weekly
+        assert report(conn,"weekly",at("2026-11-22T21:00"))==(key,weekly)
         key,monthly=report(conn,"monthly",at("2026-12-01T08:05"))
         assert key=="monthly:2026-11-01" and "Цели — состояние" in monthly and "Запланировано: 9" in monthly
     assert process("morning",at("2026-11-20T08:00"),True)
@@ -39,12 +41,15 @@ def test_send_once_and_schedule(monkeypatch):
     setup()
     sent=[]
     monkeypatch.setattr("telegram_digest.transmit",sent.append)
-    now=at("2026-11-22T20:00")
+    now=at("2026-11-20T21:00")
     assert process("weekly",now,False)
     assert process("weekly",now,False)==[]
     assert len(sent)==1
     assert due_modes(at("2026-11-22T07:59"))==[]
-    assert due_modes(at("2026-11-22T20:00"))==["morning","weekly"]
+    assert due_modes(at("2026-11-20T20:59"))==["morning"]
+    assert due_modes(at("2026-11-20T21:00"))==["morning","weekly"]
+    assert due_modes(at("2026-11-20T23:59"))==["morning","weekly"]
+    assert due_modes(at("2026-11-22T21:00"))==["morning"]
     assert due_modes(at("2026-12-01T08:05"))==["morning","monthly"]
     assert due_modes(at("2026-12-02T20:00"))==["morning"]
     assert all(len(p.encode("utf-16-le"))//2<=3800 for p in chunks("\n".join(["😀"*100]*100)))
