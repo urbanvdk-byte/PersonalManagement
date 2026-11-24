@@ -110,7 +110,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   if(kind==='tasks'){
     // Completion is controlled only by the task checkmark. Scheduling determines the active state.
     if(!instance&&payload.status!=='done'&&payload.status!=='cancelled')payload.status=payload.scheduled_at?'planned':'inbox';
-    if(instance)delete payload.status;
+    if(instance&&(scope!=='one'||payload.status===instance.status))delete payload.status;
     Object.assign(payload,priorityFlags(Number(payload.priority??4)));
     payload.color=taskColor(String(payload.color??DEFAULT_TASK_COLOR));
   }
@@ -136,6 +136,11 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   <div className="drawer-head"><div><small>{record?'РЕДАКТИРОВАНИЕ':'НОВАЯ ЗАПИСЬ'}</small><h2>{record?'Изменить':'Добавить'} {labels[kind]}</h2></div><button className="icon-btn" onClick={close} aria-label="Закрыть"><X size={20}/></button></div>
   <form onSubmit={submit} className="drawer-form">
    {field('title','Название *','Название задачи или результата')}
+   {kind==='tasks'&&record&&form.status!=='cancelled'&&(!instance||scope==='one')&&
+     <label className="task-completion-control"><input type="checkbox" checked={form.status==='done'}
+       onChange={e=>set('status',e.target.checked?'done':form.scheduled_at?'planned':'inbox')}/>
+       <span>Задача выполнена<small>{form.status==='done'?'Снимите галочку и сохраните, чтобы вернуть задачу в работу.':'Поставьте галочку и сохраните, чтобы завершить задачу.'}</small></span>
+     </label>}
    {kind==='areas'&&<>
      <div className="form-field"><span>Emoji-иконка направления</span>
        <div className="emoji-choices" role="group" aria-label="Выберите emoji направления">
@@ -186,7 +191,11 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     <div className="two">{dateField('scheduled_at','Когда выполнить',true)}{dateField('due_at','Дедлайн',true)}</div>
     {number('duration_minutes','Длительность, минут',60)}
     {instance&&<label className="form-field"><span>К каким повторениям применить изменения?</span>
-      <select aria-label="Область изменения повторений" value={scope} onChange={e=>setScope(e.target.value as Scope)}>
+      <select aria-label="Область изменения повторений" value={scope} onChange={e=>{
+        const next=e.target.value as Scope;
+        if(next!=='one')set('status',instance.status);
+        setScope(next);
+      }}>
         <option value="one">Только это повторение</option>
         <option value="future">Это и следующие</option>
         <option value="all">Вся серия</option>

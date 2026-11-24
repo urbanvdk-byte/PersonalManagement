@@ -99,3 +99,22 @@ test('a single dragged repeat persists as an exception, not a master update',asy
  expect(master.scheduled_at.slice(11,16)).toBe('09:00');
  expect(data.occurrences[0].changes.scheduled_at.slice(11,16)).toBe('10:00');
 });
+
+test('a completed occurrence remains in its calendar slot and can be reopened separately',async({page})=>{
+ await createDaily(page,'Серия для завершения');
+ await openInstance(page,'Серия для завершения',2);
+ const drawer=page.getByRole('dialog');
+ await drawer.getByRole('checkbox',{name:/Задача выполнена/}).check();
+ await drawer.getByRole('button',{name:'Сохранить'}).click();
+ await expect(drawer).toHaveCount(0);
+ const cards=page.locator('.cal-item.task-block',{hasText:'Серия для завершения'});
+ await expect(cards).toHaveCount(7);
+ await expect(cards.nth(2)).toHaveClass(/cal-item-done/);
+ await expect(page.locator('.cal-item-done',{hasText:'Серия для завершения'})).toHaveCount(1);
+ await openInstance(page,'Серия для завершения',2);
+ await expect(drawer.getByRole('checkbox',{name:/Задача выполнена/})).toBeChecked();
+ await drawer.getByRole('checkbox',{name:/Задача выполнена/}).uncheck();
+ await drawer.getByRole('button',{name:'Сохранить'}).click();
+ await expect(cards).toHaveCount(7);
+ await expect(cards.nth(2)).not.toHaveClass(/cal-item-done/);
+});

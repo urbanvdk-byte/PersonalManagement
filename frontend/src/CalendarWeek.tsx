@@ -11,7 +11,6 @@ import type {Editing,Store,Task} from './types';
 const START=0;
 const END=24;
 const LONG_PRESS_MS=420;
-const isOpen=(status:string)=>status!=='done'&&status!=='cancelled';
 
 type Props={
   start:Date;selection:DateSelection;store:Store;day:string;
@@ -81,13 +80,13 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
  const nowKey=dayKey(now);
  const nowMinutes=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
  const rangeOn=Boolean(selection.start&&selection.end);
- const expanded=expandTasks(store.tasks,store.occurrences||[],dayKey(days[0]),dayKey(days[days.length-1]));
+ const expanded=expandTasks(store.tasks,store.occurrences||[],dayKey(days[0]),dayKey(days[days.length-1]),true);
  // Timed events and tasks participate in the same collision layout, just
  // like Google Calendar. Each date gets enough horizontal space for its
  // busiest time slot, with horizontal scrolling instead of hidden titles.
  const dayLayouts=days.map(d=>{
    const key=dayKey(d);
-   const tasks=expanded.filter(t=>isOpen(t.status)&&t.scheduled_at?.startsWith(key)).map(t=>({
+   const tasks=expanded.filter(t=>t.scheduled_at?.startsWith(key)).map(t=>({
      id:t.id,kind:'tasks' as const,title:t.title,start:t.scheduled_at!,minutes:t.duration_minutes,
      priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
      emoji:t.area_id?areaEmoji(store.areas.find(a=>a.id===t.area_id)?.emoji):null,record:t
@@ -299,10 +298,11 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           const top=Math.max(0,(minute-START*60)*HOUR_HEIGHT/60);
           const height=Math.max(18,Math.min(b.minutes*HOUR_HEIGHT/60,(END-START)*HOUR_HEIGHT-top));
           const task=b.kind==='tasks';
+          const completed=b.record.status==='done';
           const location=placement.placements.get(b.kind+'-'+b.id+(task?'@'+(b.record.occurrence_date||''):''));
           const gestureTask=task&&preview?.taskId===b.id&&preview?.occurrenceDate===b.record.occurrence_date;
           return <div role="button" tabIndex={0} key={b.kind+b.id+(task?b.record.occurrence_date||'':'')}
-            className={'cal-item '+(task?'task-block':'event-block')+(task&&b.minutes<60?' compact-task':'')+(gestureTask?' gesture-source':'')}
+            className={'cal-item '+(task?'task-block':'event-block')+(task&&b.minutes<60?' compact-task':'')+(gestureTask?' gesture-source':'')+(completed?' cal-item-done':'')}
             style={{
               top,height,borderLeftColor:b.priorityColor,backgroundColor:b.fill+'35',
               left:'calc('+(location?.leftPercent??0)+'% + 3px)',
@@ -314,7 +314,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             data-layout-span={location?.span??1}
             data-item-id={b.id}
             data-occurrence-date={task?(b.record as Task).occurrence_date:undefined}
-            onPointerDown={task?e=>{
+            onPointerDown={task&&!completed?e=>{
               const side=(e.target as HTMLElement).closest<HTMLElement>('[data-resize]')?.dataset.resize;
               const mode:GestureMode=side==='start'?'resize-start':side==='end'?'resize-end':'move';
               press(e,b.record as Task,mode);
@@ -325,23 +325,23 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             onLostPointerCapture={task?e=>{if(gesture.current?.pointerId===e.pointerId)cancel(e)}:undefined}
             onClick={e=>{
               e.stopPropagation();
-              if(e.detail===0&&Date.now()>touchClickUntil.current)edit({kind:'tasks',record:b.record});
+              if(completed||(e.detail===0&&Date.now()>touchClickUntil.current))edit({kind:'tasks',record:b.record});
             }}
             onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();edit({kind:b.kind,record:b.record});}}}
             title={(task&&b.record.recurrence?'↻ ':'')+b.title+' · '+b.start.slice(11,16)}
-            aria-label={b.title+' · '+b.start.slice(11,16)}>
+            aria-label={b.title+' · '+b.start.slice(11,16)+(completed?' · Выполнено':'')}>
             <strong>{task&&b.record.recurrence?'↻ ':''}{b.title}</strong>
             {!(task&&b.minutes<60)&&<small>{b.start.slice(11,16)}</small>}
             {b.emoji&&<span className="cal-area-emoji" aria-label="Направление">{b.emoji}</span>}
-            <button type="button" className="cal-tomorrow" title="Перенести на следующий день"
+            {!completed&&<button type="button" className="cal-tomorrow" title="Перенести на следующий день"
               aria-label={'Перенести на следующий день: '+b.title}
               disabled={shifting!==null}
               onPointerDown={e=>e.stopPropagation()}
               onPointerUp={e=>e.stopPropagation()}
               onClick={e=>{e.stopPropagation();void shiftCard(b.kind,b.record);}}>
               <ArrowRight size={12}/>
-            </button>
-            {task&&<>
+            </button>}
+            {task&&!completed&&<>
               <span className="calendar-resize-edge top-edge" data-resize="start" aria-hidden="true"/>
               <span className="calendar-resize-edge bottom-edge" data-resize="end" aria-hidden="true"/>
             </>}

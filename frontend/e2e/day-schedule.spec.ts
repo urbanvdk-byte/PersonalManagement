@@ -80,3 +80,32 @@ test('completed tasks and meetings stay in the day timeline and can be reopened'
    await expect(complete).toBeVisible();
  }
 });
+
+test('completed task remains gray in calendar and can be reopened in editor on desktop and mobile',async({page})=>{
+ await page.goto('/');
+ await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+ const title='Обсудить план проекта';
+ await page.getByRole('button',{name:'Выполнить: '+title,exact:true}).click();
+ await expect(page.getByRole('button',{name:'Отменить выполнение: '+title,exact:true})).toBeVisible();
+ await page.locator('.nav-item',{hasText:'Календарь'}).click();
+ const card=page.locator('.cal-item.task-block',{hasText:title});
+ await expect(card).toHaveClass(/cal-item-done/);
+ const original=await card.evaluate(e=>({top:e.style.top,height:e.style.height}));
+ await expect.poll(()=>card.evaluate(e=>Number(getComputedStyle(e).opacity))).toBeLessThan(1);
+ await card.scrollIntoViewIfNeeded();
+ await card.click();
+ const drawer=page.getByRole('dialog');
+ await expect(drawer.getByRole('checkbox',{name:/Задача выполнена/})).toBeChecked();
+ await drawer.getByRole('checkbox',{name:/Задача выполнена/}).uncheck();
+ await drawer.getByRole('button',{name:'Сохранить'}).click();
+ await expect(card).not.toHaveClass(/cal-item-done/);
+ expect(await card.evaluate(e=>({top:e.style.top,height:e.style.height}))).toEqual(original);
+ await page.setViewportSize({width:390,height:844});
+ await page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'День',exact:true}).click();
+ await page.getByRole('button',{name:'Выполнить: '+title,exact:true}).click();
+ await page.getByRole('button',{name:title,exact:true}).click();
+ await expect(drawer.getByRole('checkbox',{name:/Задача выполнена/})).toBeChecked();
+ await drawer.getByRole('checkbox',{name:/Задача выполнена/}).uncheck();
+ await drawer.getByRole('button',{name:'Сохранить'}).click();
+ await expect(page.getByRole('button',{name:'Выполнить: '+title,exact:true})).toBeVisible();
+});
