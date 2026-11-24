@@ -3,19 +3,17 @@ import {AlarmClock,CalendarDays,Check,ChevronLeft,ChevronRight,Plus,Repeat2,Cloc
 import {addDays,dayKey,fmtDate,fmtTime,makeDay,weekStart} from './date';
 import {expandTasks} from './recurrence';
 import {areaEmoji,taskColor} from './taskPalette';
-import type {Editing,EventItem,Store,Task} from './types';
+import type {Editing,Store,Task} from './types';
 
 type TimelineTask={kind:'task';start:number;end:number;task:Task};
-type TimelineEvent={kind:'event';start:number;end:number;event:EventItem};
-type Entry=TimelineTask|TimelineEvent;
 const mins=(iso:string)=>{const parts=iso.slice(11,16).split(':').map(Number);return parts[0]*60+parts[1];};
 const asClock=(minutes:number)=>String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');
 const asDuration=(minutes:number)=>minutes>=60?Math.floor(minutes/60)+' ч'+(minutes%60?' '+minutes%60+' мин':''):minutes+' мин';
 const weekdays=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 
-export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onToggleEvent,onAdd}:{
+export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd}:{
  day:string;onDayChange:(day:string)=>void;store:Store;
- onEdit:(editing:Editing)=>void;onToggle:(task:Task)=>void;onToggleEvent?:(event:EventItem)=>void;onAdd:()=>void;
+ onEdit:(editing:Editing)=>void;onToggle:(task:Task)=>void;onAdd:()=>void;
 }){
  const monday=weekStart(makeDay(day));
  const week=Array.from({length:7},(_,i)=>addDays(monday,i));
@@ -33,12 +31,8 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onTog
    const taskItems:TimelineTask[]=tasks.filter(t=>t.scheduled_at).map(t=>({
      kind:'task',task:t,start:mins(t.scheduled_at!),end:mins(t.scheduled_at!)+t.duration_minutes
    }));
-   const eventItems:TimelineEvent[]=store.events.filter(e=>e.starts_at.slice(0,10)===day).map(e=>({
-     kind:'event',event:e,start:mins(e.starts_at),
-     end:Math.max(mins(e.starts_at)+15,mins(e.ends_at))
-   }));
-   return ([...taskItems,...eventItems] as Entry[]).sort((a,b)=>a.start-b.start||a.end-b.end);
- },[tasks,store.events,day]);
+   return taskItems.sort((a,b)=>a.start-b.start||a.end-b.end);
+ },[tasks]);
  const dayLoad=entries.reduce((total,item)=>total+Math.max(0,item.end-item.start),0);
  const done=tasks.filter(t=>t.status==='done').length;
  const withinIndex=showNow?entries.findIndex(entry=>currentMinute>=entry.start&&currentMinute<entry.end):-1;
@@ -74,8 +68,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onTog
        const key=dayKey(d);
        const active=key===day;
        const dayTasks=expandTasks(store.tasks,store.occurrences||[],key,key,true);
-       const dayEvents=store.events.filter(e=>e.starts_at.slice(0,10)===key);
-       const count=dayTasks.length+dayEvents.length;
+       const count=dayTasks.length;
        return <button key={key} className={'schedule-date '+(active?'active ':'')+(key===today?'is-today':'')}
          aria-pressed={active} aria-label={fmtDate(key,{weekday:'long',day:'numeric',month:'long'})}
          onClick={()=>onDayChange(key)}>
@@ -95,31 +88,29 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onTog
       <>{showNow&&nowMarker()}<div className="schedule-empty"><CalendarDays size={32}/><strong>На этот день пока ничего не назначено</strong><p>Добавьте задачу или вернитесь к календарю для планирования.</p><button onClick={onAdd}><Plus size={17}/> Запланировать</button></div></>
     :entries.map((item,index)=>{
        const gap=Math.max(0,item.start-cursor);cursor=Math.max(cursor,item.end);
-       const isTask=item.kind==='task';
-       const task=isTask?item.task:null;
-       const event=!isTask?item.event:null;
-       const title=task?.title||event!.title;
-       const completed=task?task.status==='done':Boolean(event?.done);
-       const area=store.areas.find(a=>a.id===(task?.area_id??event?.area_id));
-       const project=store.projects.find(p=>p.id===(task?.project_id??event?.project_id));
+       const task=item.task;
+       const title=task.title;
+       const completed=task.status==='done';
+       const area=store.areas.find(a=>a.id===task.area_id);
+       const project=store.projects.find(p=>p.id===task.project_id);
        const checks=task?(store.checklist||[]).filter(c=>c.task_id===task.id):[];
        const doneCount=checks.filter(c=>c.done).length;
-       const icon=area?areaEmoji(area.emoji):isTask?'✅':'📅';
-       return <div className="schedule-entry-wrap" key={isTask?'task-'+task!.id+'-'+(task!.occurrence_date||day):'event-'+event!.id}>
+       const icon=area?areaEmoji(area.emoji):'✅';
+       return <div className="schedule-entry-wrap" key={'task-'+task.id+'-'+(task.occurrence_date||day)}>
          {gap>=15&&<div className="schedule-gap"><span>{asClock(item.start-gap)}</span><span>Свободное время · {asDuration(gap)}</span></div>}
          {showNow&&beforeIndex===index&&nowMarker()}
          <div className={'schedule-entry'+(completed?' schedule-entry-done':'')}>
            {showNow&&withinIndex===index&&nowMarker((currentMinute-item.start)/Math.max(1,item.end-item.start))}
            <div className="schedule-time-col"><span>{asClock(item.start)}</span><small>{asClock(item.end)}</small></div>
            <div className="schedule-track-icon"><span>{icon}</span></div>
-           <div className={'schedule-entry-card '+(isTask?'schedule-task':'schedule-event')}
+           <div className="schedule-entry-card schedule-task"
              style={task?{'--task-outline':taskColor(task.color)} as CSSProperties:undefined}>
              <div className="schedule-card-main">
                <div className="schedule-card-meta">
                  <span>{asClock(item.start)}–{asClock(item.end)} · {asDuration(Math.max(0,item.end-item.start))}</span>
                  {task?.recurrence&&<Repeat2 size={13} aria-label="Повторяется"/>}
                </div>
-               <button className="schedule-card-title" onClick={()=>onEdit({kind:isTask?'tasks':'events',record:(task||event)!})}>{title}</button>
+               <button className="schedule-card-title" onClick={()=>onEdit({kind:'tasks',record:task})}>{title}</button>
                <div className="schedule-card-tags">
                  {project&&<span>{project.title}</span>}
                  {area&&<span>{icon} {area.title}</span>}
@@ -128,7 +119,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onTog
                </div>
              </div>
              <button type="button" className={'schedule-complete '+(completed?'is-done':'')}
-               onClick={()=>task?onToggle(task):onToggleEvent?.(event!)}
+               onClick={()=>onToggle(task)}
                aria-pressed={completed} aria-label={(completed?'Отменить выполнение: ':'Выполнить: ')+title}
                title={completed?'Отменить отметку выполнения':'Отметить выполненным'}><Check size={17}/></button>
            </div>

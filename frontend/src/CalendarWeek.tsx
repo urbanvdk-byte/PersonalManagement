@@ -6,7 +6,7 @@ import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
 import {expandTasks} from './recurrence';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
 import {HOUR_HEIGHT,fromTime,movePreview,resizePreview,toScheduledAt,isPreviewChanged,type CalendarPreview,type GestureMode} from './calendarInteraction';
-import type {Editing,Store,Task,EventItem} from './types';
+import type {Editing,Store,Task} from './types';
 
 const START=0;
 const END=24;
@@ -18,7 +18,6 @@ type Props={
   setDay:(date:string)=>void;edit:(item:Editing)=>void;slot:(date:Date)=>void;
   updateTask:(task:Task,changes:Record<string,unknown>)=>Promise<void>;
   onTomorrow:(task:Task)=>Promise<void>;
-  onTomorrowEvent:(event:EventItem)=>Promise<void>;
   onDropTask:(taskId:number,when:string)=>Promise<void>;
 };
 type Gesture={
@@ -27,7 +26,7 @@ type Gesture={
   active:boolean;moved:boolean;preview:CalendarPreview;
 };
 
-export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow,onTomorrowEvent,onDropTask}:Props){
+export default function CalendarWeek({start,selection,store,day,setDay,edit,slot,updateTask,onTomorrow,onDropTask}:Props){
  const days=selectedCalendarDays(start,selection);
  const hours=Array.from({length:END-START},(_,i)=>i+START);
  const [now,setNow]=useState(()=>new Date());
@@ -93,17 +92,12 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      priorityColor:PRIORITY_COLORS[t.priority-1]||PRIORITY_COLORS[3],fill:taskColor(t.color),
      emoji:t.area_id?areaEmoji(store.areas.find(a=>a.id===t.area_id)?.emoji):null,record:t
    }));
-   const events=store.events.filter(e=>e.starts_at.startsWith(key)).map(e=>({
-     id:e.id,kind:'events' as const,title:e.title,start:e.starts_at,
-     minutes:Math.max(15,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),
-     priorityColor:e.color,fill:e.color,emoji:null,record:e
-   }));
-   const placement=layoutTimedItems([...tasks,...events].map(b=>({
+   const placement=layoutTimedItems(tasks.map(b=>({
      id:b.kind+'-'+b.id+(b.kind==='tasks'?'@'+(b.record.occurrence_date||''):''),
      start:fromTime(b.start),
      end:fromTime(b.start)+b.minutes
    })));
-   return {key,tasks,events,placement};
+   return {key,tasks,placement};
  });
  const widths=dayLayouts.map(info=>Math.max(132,info.placement.maxColumns*102));
  const columns:CSSProperties={gridTemplateColumns:'64px '+widths.map(w=>'minmax('+w+'px,1fr)').join(' ')};
@@ -255,15 +249,14 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    if(gesture.current?.pointerId!==e.pointerId)return;
    clearTimer();gesture.current=null;showPreview(null);
  }
- async function shiftCard(kind:'tasks'|'events',record:Task|EventItem){
+ async function shiftCard(kind:'tasks',record:Task){
    if(shifting)return;
    setShiftError('');
    const key=kind+'-'+record.id;
    setShifting(key);
    // The save callback reloads the affected card before another click.
    try{
-     if(kind==='tasks')await onTomorrow(record as Task);
-     else await onTomorrowEvent(record as EventItem);
+     await onTomorrow(record);
    }catch(err){
      setShiftError(err instanceof Error?err.message:String(err));
    }finally{
@@ -279,7 +272,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
    <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}/>)}</div>
    <div className="cal-row cal-body" style={columns}>
     <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
-    {dayLayouts.map(({key,tasks,events,placement})=>{
+    {dayLayouts.map(({key,tasks,placement})=>{
       const pending=preview?.day===key?store.tasks.find(t=>t.id===preview.taskId):null;
       return <div key={key} data-calendar-day={key}
         className={'day-track '+(day===key?'active ':'')+(rangeOn?'in-range':'')+(pending?' gesture-target':'')}
@@ -300,7 +293,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
           const minute=Math.max(0,Math.min((END-START)*60-30,Math.floor(((e.clientY-rect.top)/HOUR_HEIGHT)*2)*30));
           const date=makeDay(key);date.setHours(START,minute,0,0);slot(date);
         }}>
-        {[...tasks,...events].map(b=>{
+        {tasks.map(b=>{
           const t=new Date(b.start);const minute=t.getHours()*60+t.getMinutes();
           if(minute>=END*60||minute+b.minutes<=START*60)return null;
           const top=Math.max(0,(minute-START*60)*HOUR_HEIGHT/60);
@@ -332,8 +325,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
             onLostPointerCapture={task?e=>{if(gesture.current?.pointerId===e.pointerId)cancel(e)}:undefined}
             onClick={e=>{
               e.stopPropagation();
-              if(task){if(e.detail===0&&Date.now()>touchClickUntil.current)edit({kind:'tasks',record:b.record as Task});}
-              else edit({kind:'events',record:b.record});
+              if(e.detail===0&&Date.now()>touchClickUntil.current)edit({kind:'tasks',record:b.record});
             }}
             onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();edit({kind:b.kind,record:b.record});}}}
             title={(task&&b.record.recurrence?'↻ ':'')+b.title+' · '+b.start.slice(11,16)}

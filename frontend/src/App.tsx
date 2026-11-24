@@ -12,11 +12,11 @@ import {ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
-import {nextTaskDay,nextEventDay,nextOverdueTask} from './nextDay';
+import {nextTaskDay,nextOverdueTask} from './nextDay';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
-import type { Editing, EventItem, Goal, Kind, Page, Project, Store, Task } from './types';
+import type { Editing, Goal, Kind, Page, Project, Store, Task } from './types';
 
-const empty:Store={areas:[],projects:[],goals:[],tasks:[],events:[],occurrences:[],checklist:[],milestones:[],activity:[]};
+const empty:Store={areas:[],projects:[],goals:[],tasks:[],occurrences:[],checklist:[],milestones:[],activity:[]};
 const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
  {id:'calendar',title:'Календарь',icon:CalendarDays},{id:'schedule',title:'Расписание дня',icon:Clock3},
  {id:'inbox',title:'Входящие',icon:Inbox},
@@ -26,7 +26,7 @@ const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
 ];
 const statuses:Record<string,string>={inbox:'Входящие',planned:'Запланировано',in_progress:'В работе',waiting:'Ожидаю',done:'Выполнено',someday:'Когда-нибудь',cancelled:'Отменено'};
 const projectStatuses:Record<string,string>={active:'Активен',paused:'Пауза',done:'Завершён',archived:'Архив'};
-const labels:Record<Kind,string>={areas:'направление',projects:'проект',goals:'цель',tasks:'задачу',events:'событие'};
+const labels:Record<Kind,string>={areas:'направление',projects:'проект',goals:'цель',tasks:'задачу'};
 const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
 function percent(goal:Goal){if(goal.done)return 100;if(goal.measurable===0)return 0;const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
@@ -63,7 +63,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
  const preventSave=missingTitle||missingTaskTime||invalidTaskDuration;
  const set=(key:string,value:unknown)=>setForm(v=>{
    const next={...v,[key]:value};
-   if(key==='project_id'&&(kind==='tasks'||kind==='goals'||kind==='events')){
+   if(key==='project_id'&&(kind==='tasks'||kind==='goals')){
      const project=store.projects.find(p=>p.id===value);
      if(project&&!next.area_id)next.area_id=project.area_id;
      if(kind==='tasks'&&next.goal_id){
@@ -139,7 +139,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
      </div>
      {field('emoji','Или вставьте свой emoji','Например, 🌞')}
    </>}
-   {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'||kind==='events'?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'||kind==='events'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'||kind==='events'?'notes':'description',e.target.value)}/></label>}
+   {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'?'notes':'description',e.target.value)}/></label>}
    {kind!=='areas'&&kind!=='projects'&&<div className="two">{refs('area_id','Направление',store.areas)}{refs('project_id','Проект',store.projects)}</div>}
    {kind==='projects'&&<>
      <div className="form-field"><span>Направления проекта (можно несколько)</span>
@@ -194,7 +194,6 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     <p className="form-help">{editing.requireSchedule?'Для задачи из календаря укажите дату и время.':'Можно оставить время пустым: задача сохранится в списке и не появится в календаре.'} Повторяющиеся задачи всегда требуют даты. Крайний срок и запланированное время — разные поля.</p>
    </>}
    {kind==='tasks'&&record&&<TaskChecklist taskId={record.id} items={(store.checklist||[]).filter(item=>item.task_id===record.id)} reload={reload}/>}
-   {kind==='events'&&<><label className="form-field"><span><input type="checkbox" checked={Boolean(form.done)} onChange={e=>set('done',e.target.checked?1:0)}/> Событие завершено</span></label><div className="two">{dateField('starts_at','Начало *',true)}{dateField('ends_at','Окончание *',true)}</div><label className="form-field"><span>Цвет</span><input type="color" value={String(form.color??'#f3bb28')} onChange={e=>set('color',e.target.value)}/></label></>}
    {error&&<p role="alert" className="error">{error}</p>}
    <div className="form-actions">{kind==='tasks'&&record&&(record as Task).scheduled_at&&!(record as Task).recurrence&&
      <button type="button" className="secondary-btn" disabled={busy} onClick={()=>void unschedule(record as Task).then(close).catch(err=>setError(String(err)))}>
@@ -282,10 +281,10 @@ function PriorityGroups({tasks,store,edit,toggle,add}:{tasks:Task[];store:Store;
   </details>}
  </div>;
 }
-function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTask,onToggle,onOpenGoal,onOpenEvent}:{
+function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTask,onToggle,onOpenGoal}:{
  project:Project;store:Store;reload:()=>Promise<void>;onBack:()=>void;onEdit:()=>void;
- onCreate:(kind:'tasks'|'goals'|'events')=>void;onOpenTask:(task:Task)=>void;
- onToggle:(task:Task)=>void;onOpenGoal:(goal:Goal)=>void;onOpenEvent:(event:EventItem)=>void;
+ onCreate:(kind:'tasks'|'goals')=>void;onOpenTask:(task:Task)=>void;
+ onToggle:(task:Task)=>void;onOpenGoal:(goal:Goal)=>void;
 }){
  const tasks=store.tasks.filter(t=>t.project_id===project.id);
  const goals=store.goals.filter(g=>g.project_id===project.id);
@@ -297,7 +296,6 @@ function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTas
    setGoalBusy(true);setGoalError('');
    try{await action();await reload();}catch(e){setGoalError(String(e));}finally{setGoalBusy(false);}
  };
- const events=store.events.filter(e=>e.project_id===project.id);
  const done=tasks.filter(t=>t.status==='done').length;
  const nextTask=[...tasks].filter(t=>isOpen(t)).sort((a,b)=>a.priority-b.priority||
    (a.scheduled_at||'9999').localeCompare(b.scheduled_at||'9999'))[0];
@@ -334,10 +332,6 @@ function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTas
          <input type="date" aria-label="Срок цели" value={goalDue} onChange={e=>setGoalDue(e.target.value)} required/>
          <button type="submit" disabled={goalBusy||!goalTitle.trim()||!goalDue}><Plus size={14}/> Добавить</button>
        </form>{goalError&&<small role="alert" className="field-error">{goalError}</small>}
-     </section>
-     <section className="project-section">
-       <header><div><h3>События</h3><small>{events.length} связанных событий</small></div><button className="secondary-btn" onClick={()=>onCreate('events')}><Plus size={15}/> Событие</button></header>
-       {events.length?events.map(e=><button key={e.id} className="project-linked-row" onClick={()=>onOpenEvent(e)}><span><strong>{e.title}</strong><small>{fmtDate(e.starts_at)} · {fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></span><CalendarDays size={17}/></button>):<div className="empty">Событий пока нет</div>}
      </section>
      <ProjectHistory items={(store.activity||[]).filter(item=>item.project_id===project.id)}/>
    </div>
@@ -418,9 +412,6 @@ export default function App(){
    await moveOrResizeTask(t,nextTaskDay(t));
  };
  const tomorrowOverdue=async(t:Task)=>await moveOrResizeTask(t,nextOverdueTask(t,selectedDay));
- const tomorrowEvent=async(event:EventItem)=>{
-   await save('events',nextEventDay(event),event.id,event.revision);
- };
  const quickCapture=async(e:FormEvent)=>{
    e.preventDefault();
    const title=quickTitle.trim();
@@ -437,13 +428,10 @@ export default function App(){
     else await save('tasks',{status:t.status==='done'?'planned':'done'},t.id,t.revision);
   }catch(e){setError(String(e))}
  };
- const toggleEvent=async(event:EventItem)=>{
-  try{await save('events',{done:event.done?0:1},event.id,event.revision)}catch(e){setError(String(e))}
- };
  const open=(kind:Kind,defaults:Record<string,unknown>={})=>{
   const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR,recurrence:'',recurrence_until:null}:
     kind==='projects'?{status:'active',area_ids:[]}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:
-    kind==='events'?{color:'#f3bb28'}:{emoji:'📁'};
+    {emoji:'📁'};
   setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&(page==='calendar'||page==='schedule')});
  };
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
@@ -452,18 +440,14 @@ export default function App(){
  const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay);
  const topThree=[...selectedTasks].sort((a,b)=>a.priority-b.priority||
    String(a.scheduled_at).localeCompare(String(b.scheduled_at))).slice(0,3);
- const dayEvents=data.events.filter(e=>e.starts_at.startsWith(selectedDay));
- const dayMinutes=selectedTasks.reduce((sum,t)=>sum+t.duration_minutes,0)+
-   dayEvents.reduce((sum,e)=>sum+Math.max(0,(new Date(e.ends_at).getTime()-new Date(e.starts_at).getTime())/60000),0);
+ const dayMinutes=selectedTasks.reduce((sum,t)=>sum+t.duration_minutes,0);
  const lateTasks=active.filter(t=>!t.recurrence&&t.due_at&&t.due_at.slice(0,10)<selectedDay&&!selectedTasks.some(x=>x.id===t.id));
- const selectedEvents=data.events.filter(t=>t.starts_at.startsWith(selectedDay));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
    const days=new Set<string>();
    const first=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth(),1));
    const last=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth()+1,0));
    expandTasks(data.tasks.filter(isOpen),data.occurrences||[],first,last).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10))});
-   data.events.forEach(e=>days.add(e.starts_at.slice(0,10)));
    return days;
  },[data,displayMonth]);
  function goToDay(key:string){
@@ -494,7 +478,6 @@ export default function App(){
   <div className="workspace">
    <header className="topbar"><div className="top-title"><button className="icon-btn mobile-toggle" onClick={()=>setMobile(true)}><Menu size={21}/></button><div><h1>{title}</h1></div></div>
     <div className="top-actions">{(page==='calendar'||page==='schedule')&&<div className="week-nav"><button className="subtle-btn" onClick={resetToday}>Сегодня</button><button className="icon-btn" onClick={()=>moveWeek(-1)}><ChevronLeft size={19}/></button><button className="icon-btn" onClick={()=>moveWeek(1)}><ChevronRight size={19}/></button><span className="week-range-desktop">{period.start&&period.end?fmtDate(period.start,{day:'numeric',month:'short'})+' — '+fmtDate(period.end,{day:'numeric',month:'short',year:'numeric'}):fmtDate(week,{day:'numeric',month:'short'})+' — '+fmtDate(addDays(week,6),{day:'numeric',month:'short',year:'numeric'})}</span><span className="week-range-mobile">{period.start&&period.end?fmtDate(period.start,{day:'numeric'})+'–'+fmtDate(period.end,{day:'numeric',month:'short'}):fmtDate(week,{day:'numeric'})+'–'+fmtDate(addDays(week,6),{day:'numeric',month:'short'})}</span></div>}
-     <button className="secondary-btn hide-mobile" onClick={()=>open('events',{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'})}><CalendarDays size={16}/> Событие</button>
      <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={17}/> Задача</button>
     </div>
    </header>
@@ -539,9 +522,9 @@ export default function App(){
    <main className="main">
     {loading?<div className="loading">Загружаем план…</div>:<>
     {page==='schedule'&&<DaySchedule day={selectedDay} onDayChange={goToDay} store={data}
-       onEdit={setEditing} onToggle={toggle} onToggleEvent={toggleEvent}
+       onEdit={setEditing} onToggle={toggle}
        onAdd={()=>open('tasks',{scheduled_at:selectedDay+'T09:00',status:'planned'})}/>}
-    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask} onTomorrowEvent={tomorrowEvent}
+    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}
       onDropTask={async(taskId,when)=>{
         const task=data.tasks.find(t=>t.id===taskId);
         if(!task||task.scheduled_at)throw Error('Задача для переноса не найдена');
@@ -564,7 +547,7 @@ export default function App(){
      </section>
      <div className="day-load"><div><strong>Загрузка дня</strong><span>{Math.round(dayMinutes/60*10)/10} из 8 ч</span></div>
        <div className="day-load-track"><span style={{width:Math.min(100,dayMinutes/480*100)+'%',background:dayMinutes>480?'#e36542':'#ff963b'}}/></div>
-       {dayMinutes>480&&<small>На день назначено больше 8 часов задач и событий.</small>}
+       {dayMinutes>480&&<small>На день назначено больше 8 часов задач.</small>}
      </div>
      {lateTasks.length>0&&<details className="late-tasks"><summary>Просроченные · {lateTasks.length}</summary>
        {lateTasks.slice(0,5).map(t=><div key={t.id}><span>{t.title}</span>
@@ -576,7 +559,6 @@ export default function App(){
        <button title="Перенести на завтра" aria-label={'На завтра: '+t.title}
           onClick={()=>void tomorrowTask(t).catch(e=>setError(String(e)))}><ArrowRight size={14}/> Завтра</button>
      </div>)}{!selectedTasks.length&&<p className="tip">На этот день задач пока нет</p>}</div>
-     {selectedEvents.length>0&&<><h3>События</h3>{selectedEvents.map(e=><button className="event-row" key={e.id} onClick={()=>setEditing({kind:'events',record:e})}><span style={{background:e.color}}/><div><strong>{e.title}</strong><small>{fmtTime(e.starts_at)}–{fmtTime(e.ends_at)}</small></div></button>)}</>}
      <button className="inline-add" onClick={()=>open('tasks',{scheduled_at:selectedDay+'T10:00',status:'planned'})}><Plus size={16}/> Добавить в этот день</button>
      <p className="tip">Нажмите на свободную ячейку календаря, чтобы назначить время задаче.</p>
     </aside></div>}
@@ -593,12 +575,10 @@ export default function App(){
       <ProjectWorkspace project={selectedProject} store={data} reload={load}
         onBack={()=>setSelectedProjectId(null)}
         onEdit={()=>setEditing({kind:'projects',record:selectedProject})}
-        onCreate={kind=>open(kind,{project_id:selectedProject.id,area_id:selectedProject.area_id,
-          ...(kind==='events'?{starts_at:selectedDay+'T10:00',ends_at:selectedDay+'T11:00'}:{})})}
+        onCreate={kind=>open(kind,{project_id:selectedProject.id,area_id:selectedProject.area_id})}
         onOpenTask={record=>setEditing({kind:'tasks',record})}
         onToggle={toggle}
-        onOpenGoal={record=>setEditing({kind:'goals',record})}
-        onOpenEvent={record=>setEditing({kind:'events',record})}/> :
+        onOpenGoal={record=>setEditing({kind:'goals',record})}/> :
       <section className="content"><div className="content-header"><div><h2>Проекты</h2></div><button className="primary-btn" onClick={()=>open('projects')}><Plus size={16}/> Проект</button></div>
         <div className="cards">{data.projects.map(p=>{
           const tasks=data.tasks.filter(t=>t.project_id===p.id);
@@ -615,10 +595,10 @@ export default function App(){
             })}</div>
             <div className="card-meta"><span>{done}/{tasks.length} задач</span><span>{p.due_date?fmtDate(p.due_date):'Без срока'}</span></div>
             <div className="progress"><div style={{width:tasks.length?done/tasks.length*100+'%':'0%'}}/></div>
-            <small>{data.goals.filter(g=>g.project_id===p.id).length} целей · {data.events.filter(e=>e.project_id===p.id).length} событий</small>
+            <small>{data.goals.filter(g=>g.project_id===p.id).length} целей</small>
           </button>;
         })}
-        {!data.projects.length&&<div className="empty-card">Создайте первый проект, затем привязывайте задачи, цели, события и направления.</div>}
+        {!data.projects.length&&<div className="empty-card">Создайте первый проект, затем привязывайте задачи, цели и направления.</div>}
         </div>
       </section>)}
     {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Цели</h2></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} data-goal-id={g.id} className="entity-card goal-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{g.measurable===0?(g.done?'Достигнута':'В работе'):percent(g)+'%'}</span></header><div className="goal-title">{goalDirections(g,data).length>0&&<span className="goal-direction-icons">{goalDirections(g,data).map(a=><span key={a.id} className="goal-direction-emoji" role="img" aria-label={'Направление: '+a.title} title={'Направление: '+a.title}>{areaEmoji(a.emoji)}</span>)}</span>}<h3>{g.title}</h3></div><p>{groupName(g.project_id,data.projects)}</p>{g.measurable!==0&&<><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div></>}<div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую цель проекта или направления.</div>}</div></section>}
