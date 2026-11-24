@@ -439,3 +439,24 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
 .form-actions{flex-wrap:wrap;max-width:100%;justify-content:flex-end}
 .form-actions button{white-space:normal;max-width:100%;flex-shrink:1}
 .goals-without-tasks>.project-linked-row{width:calc(100% - 32px);margin:0 16px 10px;padding:10px 12px;box-sizing:border-box;text-align:left}
+
+/* Calendar planning sidebar: adjustable desktop width, full task names. */
+.calendar-layout{grid-template-columns:minmax(0,1fr) 10px clamp(260px,var(--backlog-width,340px),48%)!important}
+.calendar-layout>.day-panel{min-width:0;min-height:0;display:flex!important;flex-direction:column;overflow:auto}
+.day-panel>.mini-month,.day-panel>.backlog-toggle{flex-shrink:0}
+.backlog-resizer{position:relative;cursor:col-resize;touch-action:none;outline-offset:-2px;background:#f7f6f3;z-index:13;min-width:0}
+.backlog-resizer::after{content:'';position:absolute;left:4px;top:50%;transform:translateY(-50%);width:2px;height:40px;border-radius:3px;background:#c8c6bf}
+.backlog-resizer:hover,.backlog-resizer:focus-visible,.backlog-resizer:active{background:#ffead7}
+.backlog-resizer:hover::after,.backlog-resizer:focus-visible::after,.backlog-resizer:active::after{background:#f79542}
+.day-panel .backlog-panel{display:flex;flex-direction:column;min-height:150px;flex:1 1 auto;min-width:0;max-width:none;margin:0;width:100%}
+.backlog-panel>header{flex-shrink:0}
+.backlog-panel .backlog-items{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain}
+.backlog-panel .backlog-task{flex-shrink:0;min-width:0;align-items:flex-start}
+.backlog-panel .backlog-task strong{flex:1;min-width:0;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.4}
+.backlog-panel .backlog-task span{padding-top:2px}
+@media(max-width:1070px){
+ .calendar-layout>.backlog-resizer{display:none}
+ .calendar-layout>.day-panel{display:block!important;overflow:visible;min-width:0}
+ .day-panel .backlog-panel{max-width:none;width:100%;min-height:0;margin:0}
+ .backlog-panel .backlog-items{max-height:60dvh;min-height:0}
+}

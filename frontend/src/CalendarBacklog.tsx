@@ -89,7 +89,7 @@ export default function CalendarBacklog({tasks,onSchedule,onOpen}:{
        onClick={()=>onOpen(t)}
        onPointerDown={e=>begin(e,t)}
        onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(t);}}}
-       title="Зажмите и перенесите в календарь. На телефоне удерживайте перед переносом.">
+       title={t.title+'\nЗажмите и перенесите в календарь. На телефоне удерживайте перед переносом.'}>
        <strong>{t.title}</strong><span>P{t.priority}</span>
      </div>
     )}

@@ -47,3 +47,34 @@ test('mobile hides overview KPIs and shows compact daily schedule without repeti
  expect(h).toBeLessThan(60);
  await expect(page.locator('.schedule-week .schedule-date')).toHaveCount(7);
 });
+
+
+test('calendar backlog has full names, resizable persistent width and no duplicate daily plan',async({page})=>{
+ await page.setViewportSize({width:1600,height:1000});
+ await page.goto('/');
+ const panel=page.locator('#calendar-backlog-panel');
+ const grip=page.getByRole('separator',{name:'Ширина панели незапланированных задач'});
+ await expect(grip).toBeVisible();
+ await expect(panel.locator('.day-plan-heading,.day-focus,.day-load,.day-plan-task-list')).toHaveCount(0);
+ const title=panel.locator('.backlog-task strong').first();
+ await expect(title).toBeVisible();
+ const style=await title.evaluate(e=>({whiteSpace:getComputedStyle(e).whiteSpace,overflow:getComputedStyle(e).overflow}));
+ expect(style).toEqual({whiteSpace:'normal',overflow:'visible'});
+ const before=(await panel.boundingBox())!.width;
+ const bounds=(await grip.boundingBox())!;
+ await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+ await page.mouse.down();
+ await page.mouse.move(bounds.x+bounds.width/2-100,bounds.y+bounds.height/2,{steps:5});
+ await page.mouse.up();
+ await expect.poll(async()=>(await panel.boundingBox())!.width).toBeGreaterThan(before+70);
+ const after=(await panel.boundingBox())!.width;
+ await page.reload();
+ await expect.poll(async()=>(await panel.boundingBox())!.width).toBeCloseTo(after,0);
+ await grip.focus();
+ await page.keyboard.press('ArrowRight');
+ await expect.poll(async()=>(await panel.boundingBox())!.width).toBeLessThan(after);
+ await page.setViewportSize({width:390,height:844});
+ await expect(grip).toBeHidden();
+ await expect(panel).toBeVisible();
+ await expect.poll(async()=>await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+});

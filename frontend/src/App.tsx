@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type CSSProperties } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, Wifi, WifiOff, RefreshCw, AlertTriangle, FolderKanban, Inbox, ListTodo, Menu, Plus, Search, Target, Trash2, X, ArrowRight, Clock3, MoreHorizontal } from 'lucide-react';
 import { api,isDemo } from './api';
 import type {OfflineStatus} from './offline';
@@ -12,7 +12,7 @@ import {ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
 import {RECURRENCES,expandTasks,beforeDate,transferSeriesStart} from './recurrence';
-import {nextTaskDay,nextOverdueTask} from './nextDay';
+import {nextTaskDay} from './nextDay';
 import { addDays, dateTimeLocal, dayKey, fmtDate, fmtTime, makeDay, priorityFlags, weekStart } from './date';
 import type { Editing, Goal, Kind, Page, Project, Store, Task } from './types';
 
@@ -350,6 +350,19 @@ export default function App(){
  const [quickTitle,setQuickTitle]=useState('');
  const [quickBusy,setQuickBusy]=useState(false);
  const [backlogOpen,setBacklogOpen]=useState(true);
+ const [backlogWidth,setBacklogWidth]=useState(()=>{
+   try{
+     const value=Number(localStorage.getItem('pm.calendar.backlog.width'));
+     return value>=260&&value<=640?value:340;
+   }catch{return 340}
+ });
+ useEffect(()=>{try{localStorage.setItem('pm.calendar.backlog.width',String(backlogWidth))}catch{}},[backlogWidth]);
+ const resizeBacklog=(grip:HTMLElement,width:number)=>{
+   const layout=grip.parentElement;
+   if(!layout)return;
+   const max=Math.max(260,Math.min(640,Math.floor(layout.clientWidth*.48)));
+   setBacklogWidth(Math.max(260,Math.min(max,Math.round(width))));
+ };
  const [offlineStatus,setOfflineStatus]=useState<OfflineStatus>({mode:'ready',pending:0,message:'',lastSync:null});
  const load=async()=>setData(await api.load());
  useEffect(()=>{load().catch(e=>setError(String(e))).finally(()=>setLoading(false))},[]);
@@ -412,7 +425,6 @@ export default function App(){
  const tomorrowTask=async(t:Task)=>{
    await moveOrResizeTask(t,nextTaskDay(t));
  };
- const tomorrowOverdue=async(t:Task)=>await moveOrResizeTask(t,nextOverdueTask(t,selectedDay));
  const quickCapture=async(e:FormEvent)=>{
    e.preventDefault();
    const title=quickTitle.trim();
@@ -438,11 +450,6 @@ export default function App(){
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
  const selectedProject=data.projects.find(p=>p.id===selectedProjectId);
  const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
- const selectedTasks=expandTasks(active,data.occurrences||[],selectedDay,selectedDay);
- const topThree=[...selectedTasks].sort((a,b)=>a.priority-b.priority||
-   String(a.scheduled_at).localeCompare(String(b.scheduled_at))).slice(0,3);
- const dayMinutes=selectedTasks.reduce((sum,t)=>sum+t.duration_minutes,0);
- const lateTasks=active.filter(t=>!t.recurrence&&t.due_at&&t.due_at.slice(0,10)<selectedDay&&!selectedTasks.some(x=>x.id===t.id));
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
    const days=new Set<string>();
@@ -525,12 +532,27 @@ export default function App(){
     {page==='schedule'&&<DaySchedule day={selectedDay} onDayChange={goToDay} store={data}
        onEdit={setEditing} onToggle={toggle}
        onAdd={()=>open('tasks',{scheduled_at:selectedDay+'T09:00',status:'planned'})}/>}
-    {page==='calendar'&&<div className="calendar-layout"><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}
+    {page==='calendar'&&<div className="calendar-layout" style={{'--backlog-width':backlogWidth+'px'} as CSSProperties}><CalendarWeek start={week} selection={period} store={data} day={selectedDay} setDay={goToDay} edit={setEditing} slot={addSlot} updateTask={moveOrResizeTask} onTomorrow={tomorrowTask}
       onDropTask={async(taskId,when)=>{
         const task=data.tasks.find(t=>t.id===taskId);
         if(!task||task.scheduled_at)throw Error('Задача для переноса не найдена');
         await moveOrResizeTask(task,{scheduled_at:when,status:'planned'});
-      }}/><aside className="day-panel">
+      }}/>
+     <div className="backlog-resizer" role="separator" tabIndex={0} aria-orientation="vertical"
+       aria-label="Ширина панели незапланированных задач" aria-controls="calendar-backlog-panel"
+       aria-valuemin={260} aria-valuemax={640} aria-valuenow={backlogWidth}
+       title="Потяните влево или вправо; двойной щелчок — исходная ширина"
+       onPointerDown={e=>{if(e.button===0){e.preventDefault();e.currentTarget.focus();e.currentTarget.setPointerCapture(e.pointerId)}}}
+       onPointerMove={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId)){const bounds=e.currentTarget.parentElement!.getBoundingClientRect();resizeBacklog(e.currentTarget,bounds.right-e.clientX-5)}}}
+       onPointerUp={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId)}}
+       onDoubleClick={()=>setBacklogWidth(340)}
+       onKeyDown={e=>{
+         if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+         e.preventDefault();
+         const width=e.currentTarget.parentElement?.querySelector('.day-panel')?.getBoundingClientRect().width??backlogWidth;
+         resizeBacklog(e.currentTarget,e.key==='Home'?260:e.key==='End'?640:width+(e.key==='ArrowLeft'?20:-20));
+       }}/>
+     <aside className="day-panel" id="calendar-backlog-panel">
      <MiniMonth viewMonth={displayMonth} selectedDay={selectedDay} week={week} selection={period} busyDays={busyDays} onPick={pickMonthDate} onRange={pickMonthRange} onChangeMonth={step=>setDisplayMonth(previous=>shiftCalendarMonth(previous,step))} onClearRange={()=>setPeriod({start:null,end:null})} onToday={resetToday}/>
      <div className="backlog-toggle"><button aria-expanded={backlogOpen} onClick={()=>setBacklogOpen(!backlogOpen)}>
        {backlogOpen?'▾':'▸'} Незапланированные <span>{active.filter(t=>!t.scheduled_at).length}</span>
@@ -538,30 +560,6 @@ export default function App(){
      {backlogOpen&&<CalendarBacklog tasks={active.filter(t=>!t.scheduled_at)}
         onSchedule={async(task,when)=>{await moveOrResizeTask(task,{scheduled_at:when,status:'planned'});}}
         onOpen={task=>setEditing({kind:'tasks',record:task})}/>}
-     <div className="day-plan-heading"><small>ПЛАН ДНЯ</small></div><h2>{fmtDate(selectedDay,{weekday:'long',day:'numeric',month:'long'})}</h2>
-     <div className="day-stat"><strong>{selectedTasks.length}</strong><span>задач на выбранный день</span></div>
-     <section className="day-focus"><h3>Три главных дела</h3>
-       {topThree.length?topThree.map((t,i)=><div className="day-focus-row" key={t.id+'-'+t.occurrence_date}>
-         <span>{i+1}</span><button onClick={()=>setEditing({kind:'tasks',record:t})}>{t.title}</button>
-         <small>P{t.priority}</small>
-       </div>):<p className="tip">Запланируйте задачи — здесь появятся три главных по приоритету.</p>}
-     </section>
-     <div className="day-load"><div><strong>Загрузка дня</strong><span>{Math.round(dayMinutes/60*10)/10} из 8 ч</span></div>
-       <div className="day-load-track"><span style={{width:Math.min(100,dayMinutes/480*100)+'%',background:dayMinutes>480?'#e36542':'#ff963b'}}/></div>
-       {dayMinutes>480&&<small>На день назначено больше 8 часов задач.</small>}
-     </div>
-     {lateTasks.length>0&&<details className="late-tasks"><summary>Просроченные · {lateTasks.length}</summary>
-       {lateTasks.slice(0,5).map(t=><div key={t.id}><span>{t.title}</span>
-         <button onClick={()=>void tomorrowOverdue(t).catch(e=>setError(String(e)))}>На завтра</button></div>)}
-     </details>}
-     <h3>Задачи</h3>
-     <div className="day-plan-task-list">{selectedTasks.map(t=><div key={t.id+'-'+t.occurrence_date} className="day-plan-task">
-       <button className="day-plan-title" onClick={()=>setEditing({kind:'tasks',record:t})}>{t.title}</button>
-       <button title="Перенести на завтра" aria-label={'На завтра: '+t.title}
-          onClick={()=>void tomorrowTask(t).catch(e=>setError(String(e)))}><ArrowRight size={14}/> Завтра</button>
-     </div>)}{!selectedTasks.length&&<p className="tip">На этот день задач пока нет</p>}</div>
-     <button className="inline-add" onClick={()=>open('tasks',{scheduled_at:selectedDay+'T10:00',status:'planned'})}><Plus size={16}/> Добавить в этот день</button>
-     <p className="tip">Нажмите на свободную ячейку календаря, чтобы назначить время задаче.</p>
     </aside></div>}
     {page==='inbox'&&<section className="content narrow"><div className="content-header"><div><h2>Входящие</h2></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><TaskList tasks={filtered.filter(t=>t.status==='inbox')} store={data} edit={setEditing} toggle={toggle} message="Входящие пусты"/></section>}
     {page==='tasks'&&<section className="content task-groups-page">
