@@ -83,7 +83,7 @@ test('approved branding assets load, hide on mobile, and define home-screen icon
  await expect.poll(()=>logo.evaluate((node:HTMLImageElement)=>node.naturalWidth)).toBe(192);
  const html=await page.locator('head').innerHTML();
  expect(html).toContain('favicon-v2-32.png');
- expect(html).toContain('manifest.webmanifest');
+ expect(html).toContain('manifest-v2.webmanifest');
  const manifest=await page.evaluate(async()=>{
   const url=document.querySelector<HTMLLinkElement>('link[rel="manifest"]')?.href;
   if(!url)throw Error('Missing app manifest');
@@ -107,7 +107,7 @@ test('approved branding assets load, hide on mobile, and define home-screen icon
  // Chrome may fetch the install manifest and icons without Basic Auth.
  const guest=await apiRequest.newContext();
  try{
-  for(const path of ['manifest.webmanifest','favicon-v2-32.png','brand-icon-v2-192.png','brand-icon-v2-512.png']){
+  for(const path of ['manifest-v2.webmanifest','favicon-v2-32.png','brand-icon-v2-192.png','brand-icon-v2-512.png']){
    const res=await guest.get('http://127.0.0.1:3000/'+path);
    expect(res.status(),path+' should be public to Android Chrome').toBe(200);
    expect((await res.body()).length).toBeGreaterThan(100);
