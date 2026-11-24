@@ -69,7 +69,7 @@ test('completed tasks and meetings stay in the day timeline and can be reopened'
  for(const title of ['Обсудить план проекта','Тестовая встреча']){
    const complete=schedule.getByRole('button',{name:'Выполнить: '+title,exact:true});
    await expect(complete).toBeVisible();
-   const entry=schedule.locator('.schedule-entry').filter({has:schedule.getByRole('button',{name:title,exact:true})});
+   const entry=schedule.locator('.schedule-entry').filter({has:page.getByRole('button',{name:title,exact:true})});
    const time=await entry.locator('.schedule-time-col').innerText();
    await complete.click();
    const undo=schedule.getByRole('button',{name:'Отменить выполнение: '+title,exact:true});
