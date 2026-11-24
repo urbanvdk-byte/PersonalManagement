@@ -94,9 +94,9 @@ type Row=Record<string,unknown>;
 const defaults:Record<Kind,Row>={
   areas:{color:'#4689db',emoji:'📁'},
   projects:{area_id:null,area_ids:[],description:'',status:'active',start_date:null,due_date:null},
-  goals:{area_id:null,project_id:null,description:'',period_start:null,period_end:null,start_value:0,target_value:1,current_value:0,unit:''},
+  goals:{area_id:null,project_id:null,description:'',period_start:null,period_end:null,start_value:0,target_value:1,current_value:0,unit:'',measurable:1,done:0},
   tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:DEFAULT_TASK_COLOR},
-  events:{area_id:null,project_id:null,notes:'',color:'#f3bb28'}
+  events:{area_id:null,project_id:null,notes:'',color:'#f3bb28',done:0}
 };
 async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number):Promise<void>{
   if('title' in values&&(!String(values.title||'').trim()))throw Error('Укажите название');

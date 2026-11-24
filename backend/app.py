@@ -136,9 +136,9 @@ CREATE INDEX IF NOT EXISTS idx_events_starts ON events(starts_at);
 FIELDS = {
     "areas": {"title", "color", "emoji"},
     "projects": {"area_id", "area_ids", "title", "description", "status", "start_date", "due_date"},
-    "goals": {"area_id", "project_id", "title", "description", "period_start", "period_end", "start_value", "target_value", "current_value", "unit"},
+    "goals": {"area_id", "project_id", "title", "description", "period_start", "period_end", "start_value", "target_value", "current_value", "unit", "measurable", "done"},
     "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "recurrence_until", "color"},
-    "events": {"area_id", "project_id", "title", "notes", "starts_at", "ends_at", "color"},
+    "events": {"area_id", "project_id", "title", "notes", "starts_at", "ends_at", "color", "done"},
 }
 STATUS = {"inbox", "planned", "in_progress", "waiting", "done", "someday", "cancelled"}
 PROJECT_STATUS = {"active", "paused", "done", "archived"}
@@ -200,6 +200,7 @@ def setup() -> None:
     if not os.environ.get("APP_PASSWORD"):
         raise RuntimeError("APP_PASSWORD is required. Set it in your deployment environment.")
     with connection() as conn:
+        begin_immediate(conn)
         # PostgreSQL DDL is transactional. Running these migrations repeatedly
         # never drops tables or existing records.
         for statement in SCHEMA.split(";"):
@@ -209,6 +210,9 @@ def setup() -> None:
             ("areas", "emoji", "TEXT NOT NULL DEFAULT '📁'"),
             ("tasks", "color", "TEXT NOT NULL DEFAULT '#3466d9'"),
             ("tasks", "recurrence_until", "TEXT"),
+            ("goals", "measurable", "INTEGER NOT NULL DEFAULT 1 CHECK(measurable IN (0,1))"),
+            ("goals", "done", "INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1))"),
+            ("events", "done", "INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1))"),
         ):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
         for table in (*FIELDS, "task_checklist", "project_milestones"):
@@ -216,6 +220,33 @@ def setup() -> None:
         conn.execute("""INSERT INTO project_areas(project_id,area_id)
                         SELECT id,area_id FROM projects WHERE area_id IS NOT NULL
                         ON CONFLICT DO NOTHING""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS milestone_goal_migration (
+            milestone_id INTEGER PRIMARY KEY,
+            goal_id INTEGER REFERENCES goals(id) ON DELETE SET NULL,
+            goal_revision INTEGER NOT NULL DEFAULT 1
+        )""")
+        for row in conn.execute("""SELECT m.* FROM project_milestones m
+            LEFT JOIN milestone_goal_migration l ON l.milestone_id=m.id
+            WHERE l.milestone_id IS NULL ORDER BY m.id""").fetchall():
+            migrate_milestone(conn,row)
+
+
+def migrate_milestone(conn,row):
+    goal=conn.execute("""INSERT INTO goals(project_id,area_id,title,period_end,measurable,done)
+        SELECT p.id,p.area_id,%s,%s,0,%s FROM projects p WHERE p.id=%s
+        RETURNING id,revision""",(row["title"],row["due_date"],row["done"],row["project_id"])).fetchone()
+    conn.execute("INSERT INTO milestone_goal_migration(milestone_id,goal_id,goal_revision) VALUES (%s,%s,%s)",
+                 (row["id"],goal["id"],goal["revision"]))
+
+
+def legacy_goal(conn,milestone_id):
+    row=conn.execute("SELECT goal_id,goal_revision FROM milestone_goal_migration WHERE milestone_id=%s",(milestone_id,)).fetchone()
+    if not row or row["goal_id"] is None:
+        raise HTTPException(409,"Цель уже удалена. Обновите данные.")
+    goal=fetch_one(conn,"goals",row["goal_id"])
+    if goal["revision"]!=row["goal_revision"]:
+        raise HTTPException(409,CONFLICT_MESSAGE)
+    return goal
 
 @app.on_event("startup")
 def startup() -> None:
@@ -337,7 +368,7 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
         elif key == "priority":
             if type(value) is not int or value not in (1, 2, 3, 4):
                 raise HTTPException(422, "Приоритет должен быть P1–P4")
-        elif key in ("important", "urgent"):
+        elif key in ("important", "urgent", "measurable", "done"):
             if type(value) not in (int, bool) or value not in (0, 1, False, True):
                 raise HTTPException(422, f"Некорректное поле {key}")
             payload[key] = int(value)
@@ -679,12 +710,15 @@ def add_milestone(project_id:int,payload:dict[str,Any]):
             if date.fromisoformat(due).isoformat()!=due:raise ValueError()
         except (ValueError,TypeError):raise HTTPException(422,"Неверная дата")
     with connection() as conn:
+        begin_immediate(conn)
         fetch_one(conn,"projects",project_id)
         pos=conn.execute("SELECT COALESCE(MAX(position),0)+1 AS next_position FROM project_milestones WHERE project_id=%s",(project_id,)).fetchone()["next_position"]
         cur=conn.execute("INSERT INTO project_milestones(project_id,title,due_date,position) VALUES (%s,%s,%s,%s) RETURNING id",(project_id,title,due,pos))
         new_id=cur.fetchone()["id"]
-        record_activity(conn,project_id,"Новый этап: "+title)
-        return dict(conn.execute("SELECT * FROM project_milestones WHERE id=%s",(new_id,)).fetchone())
+        row=dict(conn.execute("SELECT * FROM project_milestones WHERE id=%s",(new_id,)).fetchone())
+        migrate_milestone(conn,row)
+        record_activity(conn,project_id,"Новая цель: "+title)
+        return row
 
 @app.patch("/api/projects/{project_id}/milestones/{item_id}")
 def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any],request:Request):
@@ -704,6 +738,10 @@ def edit_milestone(project_id:int,item_id:int,payload:dict[str,Any],request:Requ
         begin_immediate(conn)
         prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
         require_current_revision(request,prev)
+        goal=legacy_goal(conn,item_id)
+        changes={("period_end" if k=="due_date" else k):v for k,v in values.items()}
+        conn.execute("UPDATE goals SET "+",".join(f"{k}=%s" for k in changes)+",revision=revision+1 WHERE id=%s",(*changes.values(),goal["id"]))
+        conn.execute("UPDATE milestone_goal_migration SET goal_revision=goal_revision+1 WHERE milestone_id=%s",(item_id,))
         conn.execute("UPDATE project_milestones SET "+",".join(f"{k}=%s" for k in values)+",revision=revision+1 WHERE id=%s",
                      (*values.values(),item_id))
         record_activity(conn,project_id,("Этап выполнен: " if values.get("done")==1 else "Этап изменён: ")+prev["title"])
@@ -716,6 +754,8 @@ def remove_milestone(project_id:int,item_id:int,request:Request):
         begin_immediate(conn)
         prev=owned(conn,"project_milestones",item_id,"project_id",project_id)
         require_current_revision(request,prev)
+        goal=legacy_goal(conn,item_id)
+        conn.execute("DELETE FROM goals WHERE id=%s",(goal["id"],))
         conn.execute("DELETE FROM project_milestones WHERE id=%s",(item_id,))
         record_activity(conn,project_id,"Этап удалён: "+prev["title"])
     return Response(status_code=204)

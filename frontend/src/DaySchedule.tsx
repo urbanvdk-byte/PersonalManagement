@@ -13,9 +13,9 @@ const asClock=(minutes:number)=>String(Math.floor(minutes/60)).padStart(2,'0')+'
 const asDuration=(minutes:number)=>minutes>=60?Math.floor(minutes/60)+' ч'+(minutes%60?' '+minutes%60+' мин':''):minutes+' мин';
 const weekdays=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 
-export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd}:{
+export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onToggleEvent,onAdd}:{
  day:string;onDayChange:(day:string)=>void;store:Store;
- onEdit:(editing:Editing)=>void;onToggle:(task:Task)=>void;onAdd:()=>void;
+ onEdit:(editing:Editing)=>void;onToggle:(task:Task)=>void;onToggleEvent?:(event:EventItem)=>void;onAdd:()=>void;
 }){
  const monday=weekStart(makeDay(day));
  const week=Array.from({length:7},(_,i)=>addDays(monday,i));
@@ -28,7 +28,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
  const today=dayKey(now);
  const showNow=day===today;
  const currentMinute=now.getHours()*60+now.getMinutes();
- const tasks=useMemo(()=>expandTasks(store.tasks,store.occurrences||[],day,day),[store.tasks,store.occurrences,day]);
+ const tasks=useMemo(()=>expandTasks(store.tasks,store.occurrences||[],day,day,true),[store.tasks,store.occurrences,day]);
  const entries=useMemo(()=>{
    const taskItems:TimelineTask[]=tasks.filter(t=>t.scheduled_at).map(t=>({
      kind:'task',task:t,start:mins(t.scheduled_at!),end:mins(t.scheduled_at!)+t.duration_minutes
@@ -73,7 +73,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
      {week.map((d,i)=>{
        const key=dayKey(d);
        const active=key===day;
-       const dayTasks=expandTasks(store.tasks,store.occurrences||[],key,key);
+       const dayTasks=expandTasks(store.tasks,store.occurrences||[],key,key,true);
        const dayEvents=store.events.filter(e=>e.starts_at.slice(0,10)===key);
        const count=dayTasks.length+dayEvents.length;
        return <button key={key} className={'schedule-date '+(active?'active ':'')+(key===today?'is-today':'')}
@@ -99,6 +99,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
        const task=isTask?item.task:null;
        const event=!isTask?item.event:null;
        const title=task?.title||event!.title;
+       const completed=task?task.status==='done':Boolean(event?.done);
        const area=store.areas.find(a=>a.id===(task?.area_id??event?.area_id));
        const project=store.projects.find(p=>p.id===(task?.project_id??event?.project_id));
        const checks=task?(store.checklist||[]).filter(c=>c.task_id===task.id):[];
@@ -107,7 +108,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
        return <div className="schedule-entry-wrap" key={isTask?'task-'+task!.id+'-'+(task!.occurrence_date||day):'event-'+event!.id}>
          {gap>=15&&<div className="schedule-gap"><span>{asClock(item.start-gap)}</span><span>Свободное время · {asDuration(gap)}</span></div>}
          {showNow&&beforeIndex===index&&nowMarker()}
-         <div className="schedule-entry">
+         <div className={'schedule-entry'+(completed?' schedule-entry-done':'')}>
            {showNow&&withinIndex===index&&nowMarker((currentMinute-item.start)/Math.max(1,item.end-item.start))}
            <div className="schedule-time-col"><span>{asClock(item.start)}</span><small>{asClock(item.end)}</small></div>
            <div className="schedule-track-icon"><span>{icon}</span></div>
@@ -126,11 +127,10 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
                  {checks.length>0&&<span><Check size={11}/> {doneCount}/{checks.length}</span>}
                </div>
              </div>
-             {task?<button className={'schedule-complete '+(task.status==='done'?'is-done':'')}
-               onClick={()=>onToggle(task)} aria-label={'Выполнить: '+task.title}
-               title="Отметить задачу выполненной"><Check size={17}/></button>
-             :<button className="schedule-open-event" aria-label={'Открыть событие '+title}
-               onClick={()=>onEdit({kind:'events',record:event!})}><CalendarDays size={17}/></button>}
+             <button type="button" className={'schedule-complete '+(completed?'is-done':'')}
+               onClick={()=>task?onToggle(task):onToggleEvent?.(event!)}
+               aria-pressed={completed} aria-label={(completed?'Отменить выполнение: ':'Выполнить: ')+title}
+               title={completed?'Отменить отметку выполнения':'Отметить выполненным'}><Check size={17}/></button>
            </div>
          </div>
        </div>;

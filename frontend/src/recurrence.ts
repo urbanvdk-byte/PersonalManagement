@@ -36,7 +36,7 @@ function makeInstance(task:Task,key:string,changes:Record<string,unknown>={}):Ta
 }
 /** Virtual calendar instances. Exceptions are sparse rows, never bulk-generated. */
 export function expandTasks(tasks:readonly Task[],occurrences:readonly TaskOccurrence[],
- start:string,end:string):Task[]{
+ start:string,end:string,includeDone=false):Task[]{
  const exceptions=new Map<string,TaskOccurrence>();
  for(const exception of occurrences)exceptions.set(exception.task_id+'@'+exception.occurrence_date,exception);
  const result:Task[]=[];
@@ -52,7 +52,7 @@ export function expandTasks(tasks:readonly Task[],occurrences:readonly TaskOccur
    const key=dayKey(at);
    if(!isOccurrenceDate(task,key))continue;
    const exception=exceptions.get(task.id+'@'+key);
-   if(exception?.changes?.status==='cancelled'||exception?.changes?.status==='done')continue;
+   if(exception?.changes?.status==='cancelled'||(!includeDone&&exception?.changes?.status==='done'))continue;
    const view=makeInstance(task,key,exception?.changes||{});
    if(view.scheduled_at&&view.scheduled_at.slice(0,10)>=start&&view.scheduled_at.slice(0,10)<=end)result.push(view);
   }
@@ -63,11 +63,11 @@ export function expandTasks(tasks:readonly Task[],occurrences:readonly TaskOccur
    const scheduled=String(exception.changes?.scheduled_at||'');
    if(!scheduled||scheduled.slice(0,10)<start||scheduled.slice(0,10)>end)continue;
    if(exception.occurrence_date>=from&&exception.occurrence_date<=end)continue;
-   if(['cancelled','done'].includes(String(exception.changes?.status||'')))continue;
+   if(exception.changes?.status==='cancelled'||(!includeDone&&exception.changes?.status==='done'))continue;
    result.push(makeInstance(task,exception.occurrence_date,exception.changes));
   }
  }
- return result.filter(task=>task.status!=='done'&&task.status!=='cancelled');
+ return result.filter(task=>task.status!=='cancelled'&&(includeDone||task.status!=='done'));
 }
 export function occurrenceAt(task:Task,key:string,occurrences:readonly TaskOccurrence[]):Task{
  const exception=occurrences.find(x=>x.task_id===task.id&&x.occurrence_date===key);

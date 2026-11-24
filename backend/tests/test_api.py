@@ -383,3 +383,29 @@ def test_offline_replay_occurrence_and_nested_checklist_once(tmp_path, monkeypat
         assert created.status_code == 200, created.text
         assert client.post("/api/offline/execute", headers=auth(), json=add).json() == created.json()
         assert len(client.get("/api/bootstrap", headers=auth()).json()["checklist"]) == 1
+
+
+def test_unified_goals_and_event_completion(monkeypatch):
+    from app import setup, connection
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    with TestClient(app) as client:
+        project=client.post("/api/projects",headers=auth(),json={"title":"Проект"}).json()
+        with connection() as conn:
+            conn.execute("INSERT INTO project_milestones(project_id,title,due_date,done) VALUES (%s,%s,%s,1)",(project["id"],"Старый этап","2026-12-07"))
+        setup()
+        setup()
+        goals=client.get("/api/bootstrap",headers=auth()).json()["goals"]
+        migrated=[g for g in goals if g["title"]=="Старый этап"]
+        assert len(migrated)==1
+        assert migrated[0]["measurable"]==0 and migrated[0]["done"]==1
+        assert migrated[0]["period_end"]=="2026-12-07"
+        assert migrated[0]["project_id"]==project["id"]
+        response=client.post("/api/goals",headers=auth(),json={"title":"Простая цель","project_id":project["id"],"period_end":"2026-12-08","measurable":0,"done":0})
+        assert response.status_code==201,response.text
+        assert response.json()["measurable"]==0
+        event=client.post("/api/events",headers=auth(),json={"title":"Тест","starts_at":"2026-11-24T18:30","ends_at":"2026-11-24T19:30"}).json()
+        op={"operation_id":str(__import__("uuid").uuid4()),"action":"save","kind":"events","item_id":event["id"],"values":{"done":1}}
+        res=client.post("/api/offline/execute",headers={**auth(),"If-Match":str(event["revision"])},json=op)
+        assert res.status_code==200,res.text
+        saved=next(e for e in client.get("/api/bootstrap",headers=auth()).json()["events"] if e["id"]==event["id"])
+        assert saved["done"]==1 and saved["starts_at"]==event["starts_at"]
