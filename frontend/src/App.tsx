@@ -8,6 +8,7 @@ import CalendarWeek from './CalendarWeek';
 import DaySchedule from './DaySchedule';
 import CalendarBacklog from './CalendarBacklog';
 import TaskChecklist from './TaskChecklist';
+import PushSettings from './PushSettings';
 import {ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
@@ -450,6 +451,21 @@ export default function App(){
     {emoji:'📁'};
   setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&(page==='calendar'||page==='schedule')});
  };
+ useEffect(()=>{
+   if(loading)return;
+   const params=new URLSearchParams(window.location.search);
+   const id=Number(params.get('task'));
+   if(!Number.isSafeInteger(id)||id<=0)return;
+   const task=data.tasks.find(t=>t.id===id);
+   if(!task)return;
+   const day=params.get('day')||'';
+   const record=task.recurrence&&/^\d{4}-\d{2}-\d{2}$/.test(day)
+     ?expandTasks([task],data.occurrences||[],day,day,true).find(t=>t.id===id)||task:task;
+   setEditing({kind:'tasks',record});
+   params.delete('task');params.delete('day');
+   const search=params.toString();
+   window.history.replaceState(null,'',window.location.pathname+(search?'?'+search:'')+window.location.hash);
+ },[loading,data]);
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
  const selectedProject=data.projects.find(p=>p.id===selectedProjectId);
  const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
@@ -483,7 +499,7 @@ export default function App(){
    <div className="pm-sidebar-logo"><img src={import.meta.env.BASE_URL+'brand-icon-v2-192.png'} alt="PersonalManagement" width="36" height="36"/></div>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
    <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{if(p.id==='schedule')goToDay(dayKey(new Date()));setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(isIncoming).length>0&&<em>{data.tasks.filter(isIncoming).length}</em>}</button>)}</nav>
-   <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
+   <div className="sidebar-foot">{!isDemo&&<PushSettings/>}<div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
   <div className="workspace">

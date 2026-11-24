@@ -52,3 +52,29 @@ self.addEventListener('fetch',event=>{
   return result;
  })());
 });
+
+self.addEventListener('push',event=>{
+ if(!event.data)return;
+ let data;
+ try{data=event.data.json()}catch{return}
+ if(typeof data.title!=='string'||typeof data.body!=='string')return;
+ event.waitUntil(self.registration.showNotification(data.title,{
+   body:data.body,icon:new URL('brand-icon-v2-192.png',root).toString(),
+   tag:String(data.tag||'pm-task'),renotify:false,
+   data:{url:typeof data.url==='string'?data.url:root.href}
+ }));
+});
+self.addEventListener('notificationclick',event=>{
+ event.notification.close();
+ event.waitUntil((async()=>{
+   let target;
+   try{target=new URL(event.notification.data?.url||root.href,root)}catch{target=root}
+   if(target.origin!==root.origin||!target.pathname.startsWith(root.pathname))target=root;
+   const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+   const existing=windows.find(client=>client.url.startsWith(root.href));
+   if(existing){
+     try{const navigated=await existing.navigate(target.href);if(navigated){await navigated.focus();return}}catch{}
+   }
+   await self.clients.openWindow(target.href);
+ })());
+});
