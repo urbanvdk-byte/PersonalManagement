@@ -304,26 +304,26 @@ async function createExtra(kind:ExtraKind,parentId:number,details:Row):Promise<v
  const id=Math.max(0,...list.map(item=>item.id))+1;
  const position=1+list.filter(item=>kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId).length;
  if(kind==='checklist'){
-   (data.checklist||=[]).push({id,task_id:parentId,title,done:0,position});
+   (data.checklist||=[]).push({id,task_id:parentId,title,done:0,position,revision:1});
    writeActivity(data,data.tasks.find(task=>task.id===parentId)?.project_id||null,'Чек-лист: '+title);
  }else{
    const date=details.due_date;
    if(date!=null&&!/^\d{4}-\d{2}-\d{2}$/.test(String(date)))throw Error('Неверная дата этапа');
-   (data.milestones||=[]).push({id,project_id:parentId,title,done:0,position,due_date:date?String(date):null});
+   (data.milestones||=[]).push({id,project_id:parentId,title,done:0,position,due_date:date?String(date):null,revision:1});
    writeActivity(data,parentId,'Новый этап: '+title);
  }
  storeDemo(data);
 }
 async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row,revision?:number):Promise<void>{
  if(!isDemo&&offlineDraft===null){
-   await offlineEngine.mutate({action:'extra_update',kind,parent_id:parentId,item_id:id,values:details,revision});
+   await offlineEngine.mutate({action:'extra_update',kind,parent_id:parentId,item_id:id,values:details,revision:revision??1});
    return;
  }
  const data=loadDemo();
  const list=kind==='checklist'?data.checklist:data.milestones;
  const row=list?.find(item=>item.id===id&&(kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId));
  if(!row)throw Error('Элемент не найден');
- checkRevision(row.revision,revision);
+ checkRevision(row.revision??1,revision);
  if(details.done!==undefined&&![0,1,false,true].includes(details.done as number|boolean))throw Error('Неверный статус');
  if(details.title!==undefined&&(!String(details.title).trim()||String(details.title).length>250))throw Error('Неверное название');
  if(details.due_date!==undefined&&details.due_date!==null&&!/^\d{4}-\d{2}-\d{2}$/.test(String(details.due_date)))throw Error('Неверная дата');
@@ -335,14 +335,14 @@ async function updateExtra(kind:ExtraKind,parentId:number,id:number,details:Row,
 }
 async function removeExtra(kind:ExtraKind,parentId:number,id:number,revision?:number):Promise<void>{
  if(!isDemo&&offlineDraft===null){
-   await offlineEngine.mutate({action:'extra_remove',kind,parent_id:parentId,item_id:id,values:{},revision});
+   await offlineEngine.mutate({action:'extra_remove',kind,parent_id:parentId,item_id:id,values:{},revision:revision??1});
    return;
  }
  const data=loadDemo();
  const list=kind==='checklist'?data.checklist:data.milestones;
  const row=list?.find(item=>item.id===id&&(kind==='checklist'?'task_id' in item&&item.task_id===parentId:'project_id' in item&&item.project_id===parentId));
  if(!row)throw Error('Элемент не найден');
- checkRevision(row.revision,revision);
+ checkRevision(row.revision??1,revision);
  if(kind==='checklist')data.checklist=(data.checklist||[]).filter(item=>item.id!==id);
  else data.milestones=(data.milestones||[]).filter(item=>item.id!==id);
  writeActivity(data,kind==='milestones'?parentId:data.tasks.find(task=>task.id===parentId)?.project_id||null,'Удалено: '+row.title);

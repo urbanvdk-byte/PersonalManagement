@@ -51,6 +51,7 @@ type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,dat
  reload:()=>Promise<void>;unschedule:(task:Task)=>Promise<void>};
 function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,reload,unschedule}:DrawerProps){
  const {kind,record,defaults}=editing;
+ const taskId=kind==='tasks'&&record?(store.tasks.some(t=>t.id===record.id)?record.id:store.local_id_map?.[record.id]??record.id):null;
  const [form,setForm]=useState<Record<string,unknown>>({...defaults,...record});
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
  const instance=kind==='tasks'&&(record as Task|undefined)?.occurrence_date?record as Task:null;
@@ -193,7 +194,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     </>}
     <p className="form-help">{editing.requireSchedule?'Для задачи из календаря укажите дату и время.':'Можно оставить время пустым: задача сохранится в списке и не появится в календаре.'} Повторяющиеся задачи всегда требуют даты. Крайний срок и запланированное время — разные поля.</p>
    </>}
-   {kind==='tasks'&&record&&<TaskChecklist taskId={record.id} items={(store.checklist||[]).filter(item=>item.task_id===record.id)} reload={reload}/>}
+   {taskId!==null&&<TaskChecklist taskId={taskId} items={(store.checklist||[]).filter(item=>item.task_id===taskId)} reload={reload}/>}
    {error&&<p role="alert" className="error">{error}</p>}
    <div className="form-actions">{kind==='tasks'&&record&&(record as Task).scheduled_at&&!(record as Task).recurrence&&
      <button type="button" className="secondary-btn" disabled={busy} onClick={()=>void unschedule(record as Task).then(close).catch(err=>setError(String(err)))}>

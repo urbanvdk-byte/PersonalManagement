@@ -105,6 +105,19 @@ function localKnownIds(value:unknown,map:IdMap,key=''):unknown{
  );
  return value;
 }
+// Keep local references usable between acknowledgment and the next bootstrap.
+function visibleMappings(data:Store,map:IdMap):IdMap{
+ const visible=new Set<number>();
+ for(const kind of KINDS)for(const item of data[kind])visible.add(item.id);
+ for(const item of [...(data.checklist||[]),...(data.milestones||[])])visible.add(item.id);
+ return Object.fromEntries(Object.entries(map).filter(([id])=>!visible.has(Number(id))));
+}
+function remapSnapshot(data:Store,map:IdMap):Store{
+ const next=localKnownIds(data,map) as Store;
+ for(const kind of KINDS)for(const item of next[kind])item.id=map[item.id]??item.id;
+ for(const item of [...(next.checklist||[]),...(next.milestones||[])])item.id=map[item.id]??item.id;
+ return next;
+}
 function mapped(id:number|undefined,map:IdMap):number|undefined{
  if(id===undefined)return undefined;
  if(id<0){
@@ -123,6 +136,7 @@ async function send(op:OfflineOperation,map:IdMap):Promise<Envelope>{
  };
  const headers:Record<string,string>={'Content-Type':'application/json'};
  if(op.revision!==undefined)headers['If-Match']=String(op.revision);
+ else if(op.kind==='checklist'&&(op.action==='extra_update'||op.action==='extra_remove'))headers['If-Match']='1';
  let response:Response;
  try{
   response=await fetch('/api/offline/execute',{
@@ -213,6 +227,12 @@ async function acknowledge(op:OfflineOperation,server:Envelope):Promise<void>{
    if(typeof actual!=='number'||actual<=0)throw Error('Сервер не вернул ID новой записи');
    ids[op.temp_id]=actual;
    meta.put({key:'mappings',value:ids});
+   // Update the snapshot and ID mapping together; a new local operation
+   // must never see a server ID with a snapshot still using its temp ID.
+   const saved=await req(meta.get('snapshot')) as Snapshot|undefined;
+   if(saved&&op.kind!=='events'){
+    meta.put({...saved,version:saved.version+1,data:remapSnapshot(saved.data,ids),updatedAt:Date.now()});
+   }
   }
   const delta=op.revision!==undefined&&typeof server.revision==='number'
    ?server.revision-(op.revision+1):0;
@@ -271,7 +291,8 @@ export class OfflineEngine {
   }
   if(!current)throw Error(CACHE_WARNING);
   if(navigator.onLine)void this.syncNow();
-  return current.data;
+  const map=await mappings();
+  return {...current.data,local_id_map:visibleMappings(current.data,map)};
  }
  async status():Promise<OfflineStatus>{
   this.start();
@@ -287,11 +308,12 @@ export class OfflineEngine {
     }
     if(!current)throw Error(CACHE_WARNING);
     const known=await mappings();
+    const visible=visibleMappings(current.data,known);
     const localDetails={
      ...details,
-     ...(details.item_id===undefined?{}:{item_id:details.item_id<0?known[details.item_id]??details.item_id:details.item_id}),
-     ...(details.parent_id===undefined?{}:{parent_id:details.parent_id<0?known[details.parent_id]??details.parent_id:details.parent_id}),
-     values:localKnownIds(details.values,known) as Record<string,unknown>
+     ...(details.item_id===undefined?{}:{item_id:details.item_id<0?visible[details.item_id]??details.item_id:details.item_id}),
+     ...(details.parent_id===undefined?{}:{parent_id:details.parent_id<0?visible[details.parent_id]??details.parent_id:details.parent_id}),
+     values:localKnownIds(details.values,visible) as Record<string,unknown>
     };
     const created=details.action==='save'&&details.item_id===undefined||
      details.action==='extra_add'||details.action==='split';
