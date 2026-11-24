@@ -47,7 +47,23 @@ def validate_subscription(payload):
     if len(p256dh)!=65 or len(auth)!=16:
         raise ValueError("keys")
     ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(),p256dh)
-    return {"endpoint":endpoint,"keys":{"p256dh":b64(p256dh),"auth":b64(auth)}}
+    zone=payload.get("timezone")
+    if zone is not None:
+        if not isinstance(zone,str) or len(zone)>100:
+            raise ValueError("timezone")
+        try:
+            ZoneInfo(zone)
+        except Exception as exc:
+            raise ValueError("timezone") from exc
+    result={"endpoint":endpoint,"keys":{"p256dh":b64(p256dh),"auth":b64(auth)}}
+    if zone:
+        result["timezone"]=zone
+    return result
+
+def subscription_now(subscription,now):
+    # The calendar stores floating local times; interpret them in the device's
+    # actual calendar timezone. Legacy subscriptions use the server fallback.
+    return now.astimezone(ZoneInfo(subscription["timezone"])) if subscription.get("timezone") else now
 
 def private_key(conn):
     row=conn.execute("SELECT private_key FROM push_vapid WHERE id=1").fetchone()
@@ -82,7 +98,10 @@ def send(subscription,task,key):
     identity=f"{task['id']}:{when}"
     body={"title":"Задача через час","body":f"{when[11:16]} · P{task['priority']} · {task['title']}",
           "tag":identity,"url":"/?"+urlencode({"task":task["id"],"day":when[:10]})}
-    webpush(subscription_info=subscription,data=json.dumps(body,ensure_ascii=False),
+    deliver(subscription,body,key)
+
+def deliver(subscription,body,key):
+    webpush(subscription_info={k:subscription[k] for k in ("endpoint","keys")},data=json.dumps(body,ensure_ascii=False),
             vapid_private_key=key,vapid_claims={"sub":os.environ.get("PM_PUSH_SUBJECT","https://persmanag.bothost.tech/")},
             ttl=300,timeout=10)
 
@@ -94,28 +113,31 @@ def process_push(now):
         if not subscriptions:
             return 0
         tasks,exceptions=load_tasks(conn)
-        due=due_tasks(tasks,exceptions,now)
         conn.execute("DELETE FROM push_sent WHERE sent_at < CURRENT_TIMESTAMP - INTERVAL '35 days'")
-        if not due:
-            return 0
         key=private_key(conn)
         count=0
         for item in subscriptions:
             endpoint=item["endpoint"]
+            try:
+                subscription=validate_subscription(json.loads(item["subscription"]))
+                due=due_tasks(tasks,exceptions,subscription_now(subscription,now))
+            except (ValueError,TypeError):
+                LOG.warning("Invalid Web Push subscription")
+                continue
             for task in due:
                 identity=f"{task['id']}:{task['scheduled_at']}"
                 if conn.execute("SELECT 1 FROM push_sent WHERE endpoint=%s AND reminder_key=%s",(endpoint,identity)).fetchone():
                     continue
                 try:
-                    send(validate_subscription(json.loads(item["subscription"])),task,key)
+                    send(subscription,task,key)
                 except WebPushException as exc:
                     if exc.response is not None and exc.response.status_code in (404,410):
                         conn.execute("DELETE FROM push_subscriptions WHERE endpoint=%s",(endpoint,))
                         break
-                    LOG.warning("Web Push delivery failed")
+                    LOG.warning("Web Push delivery failed (HTTP %s)",exc.response.status_code if exc.response is not None else "unknown")
                     continue
-                except Exception:
-                    LOG.warning("Web Push delivery failed")
+                except Exception as exc:
+                    LOG.warning("Web Push delivery failed (%s)",type(exc).__name__)
                     continue
                 # If unsubscribed concurrently, do not resurrect the endpoint.
                 conn.execute("""INSERT INTO push_sent(endpoint,reminder_key)

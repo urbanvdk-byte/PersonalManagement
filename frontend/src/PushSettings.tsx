@@ -5,7 +5,10 @@ const supported=()=>window.isSecureContext&&'serviceWorker' in navigator&&'PushM
 
 async function request<T>(path:string,init?:RequestInit):Promise<T>{
  const response=await fetch('/api/push/'+path,{...init,cache:'no-store',headers:{'Content-Type':'application/json'}});
- if(!response.ok)throw Error('Не удалось сохранить подписку. Проверьте подключение к интернету.');
+ if(!response.ok){
+  const error=await response.json().catch(()=>({}));
+  throw Error(typeof error.detail==='string'?error.detail:'Ошибка сервера: HTTP '+response.status);
+ }
  return response.status===204?undefined as T:await response.json();
 }
 function keyBytes(value:string):Uint8Array<ArrayBuffer>{
@@ -18,6 +21,9 @@ async function registration(){
  return ready;
 }
 
+const deviceZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+const syncSubscription=(sub:PushSubscription)=>request('subscription',{method:'PUT',body:JSON.stringify({...sub.toJSON(),timezone:deviceZone()})});
+
 export default function PushSettings(){
  const [enabled,setEnabled]=useState(false);
  const [busy,setBusy]=useState(false);
@@ -28,7 +34,11 @@ export default function PushSettings(){
   let cancelled=false;
   navigator.serviceWorker.getRegistration().then(async reg=>{
    const sub=await reg?.pushManager.getSubscription();
-   if(!cancelled)setEnabled(Boolean(sub)&&Notification.permission==='granted');
+   if(cancelled)return;
+   if(sub&&Notification.permission==='granted'){
+    setEnabled(true);
+    try{await syncSubscription(sub)}catch{if(!cancelled)setMessage('Не удалось обновить серверную подписку. Проверьте интернет.');}
+   }else setEnabled(false);
   }).catch(()=>{});
   return ()=>{cancelled=true};
  },[available]);
@@ -52,7 +62,7 @@ export default function PushSettings(){
      }
     }
     if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:keyBytes(publicKey)});
-    try{await request('subscription',{method:'PUT',body:JSON.stringify(sub.toJSON())});}
+    try{await syncSubscription(sub);}
     catch(error){await sub.unsubscribe().catch(()=>false);throw error;}
     setEnabled(true);setMessage('Напоминания включены на этом устройстве.');
    }else{
@@ -67,11 +77,24 @@ export default function PushSettings(){
   }catch(error){setMessage(error instanceof Error?error.message:'Не удалось настроить уведомления.');}
   finally{setBusy(false);}
  }
+ async function testDelivery(){
+  setBusy(true);setMessage('');
+  try{
+   const reg=await registration(),sub=await reg.pushManager.getSubscription();
+   if(!sub||Notification.permission!=='granted')throw Error('Сначала включите напоминания.');
+   await syncSubscription(sub);
+   const result=await request<{ok:boolean;timezone:string}>('test',{method:'POST',body:JSON.stringify({endpoint:sub.endpoint})});
+   setMessage('Push-сервис принял тест. Часовой пояс: '+result.timezone+'. Проверьте шторку уведомлений.');
+  }catch(error){setMessage(error instanceof Error?error.message:'Ошибка тестовой отправки.');}
+  finally{setBusy(false);}
+ }
  return <div className="push-settings">
   <button type="button" className="export-link" disabled={busy||!available} aria-pressed={enabled}
     onClick={()=>void toggle()}>{enabled?<BellOff size={15}/>:<Bell size={15}/>}
     {enabled?'Отключить напоминания':'Включить напоминания'}</button>
   <small>За 1 час до начала задачи</small>
+  {enabled&&<><small>Часовой пояс: {deviceZone()}</small>
+   <button type="button" className="export-link" disabled={busy} onClick={()=>void testDelivery()}>Проверить уведомление</button></>}
   {!available&&<small>Нужен браузер с поддержкой Web Push.</small>}
   {message&&<small role="status">{message}</small>}
  </div>;

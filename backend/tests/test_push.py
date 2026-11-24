@@ -51,3 +51,15 @@ def test_subscription_security_keys_and_dedup(monkeypatch):
     with connection() as conn:
         conn.execute("DELETE FROM push_subscriptions WHERE endpoint=%s",(sub["endpoint"],))
     assert process_push(at("2026-11-20T11:01"))==0
+
+
+def test_device_timezone_at_midnight():
+    from push_reminders import subscription_now
+    sub=validate_subscription({**subscription(),"timezone":"Asia/Vladivostok"})
+    now=subscription_now(sub,at("2026-11-19T17:00"))
+    assert now.isoformat()=="2026-11-20T00:00:00+10:00"
+    task={"id":1,"priority":1,"title":"ТЕСТ","scheduled_at":"2026-11-20T01:00","status":"planned","recurrence":"","duration_minutes":60}
+    assert due_tasks([task],{},now)==[task]
+    assert not due_tasks([task],{},at("2026-11-19T17:00"))
+    with pytest.raises(ValueError):
+        validate_subscription({**subscription(),"timezone":"invalid/zone"})

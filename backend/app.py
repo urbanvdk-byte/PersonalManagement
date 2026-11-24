@@ -1001,6 +1001,29 @@ def subscribe_push(payload:dict[str,Any]):
           (subscription["endpoint"],json.dumps(subscription)))
     return {"ok":True}
 
+@app.post("/api/push/test")
+def test_push_delivery(payload:dict[str,Any]):
+    from push_reminders import deliver,private_key,validate_subscription,WebPushException
+    endpoint=payload.get("endpoint")
+    if not isinstance(endpoint,str) or len(endpoint)>4096:
+        raise HTTPException(422,"Некорректная подписка")
+    with connection() as conn:
+        row=conn.execute("SELECT subscription FROM push_subscriptions WHERE endpoint=%s",(endpoint,)).fetchone()
+        if not row:
+            raise HTTPException(404,"Подписка не зарегистрирована на сервере. Включите напоминания повторно.")
+        subscription=validate_subscription(json.loads(row["subscription"]))
+        key=private_key(conn)
+    try:
+        deliver(subscription,{"title":"Проверка напоминаний","body":"PersonalManagement: тестовое уведомление","tag":"pm-test","url":"/"},key)
+    except WebPushException as exc:
+        code=exc.response.status_code if exc.response is not None else None
+        if code in (404,410):
+            raise HTTPException(409,"Подписка устарела. Отключите и заново включите напоминания.")
+        raise HTTPException(502,f"Push-сервис отклонил уведомление (HTTP {code or 'неизвестен'})")
+    except Exception as exc:
+        raise HTTPException(502,f"Ошибка отправки ({type(exc).__name__})")
+    return {"ok":True,"timezone":subscription.get("timezone") or os.environ.get("PM_TIMEZONE","Europe/Moscow")}
+
 @app.delete("/api/push/subscription",status_code=204)
 def unsubscribe_push(payload:dict[str,Any]):
     endpoint=payload.get("endpoint")
