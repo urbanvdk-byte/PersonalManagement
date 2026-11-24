@@ -12,7 +12,7 @@ test('task without time saves in list but never in calendar',async({page})=>{
  expect((await storage(page)).tasks.find(t=>t.title==='Без времени')?.scheduled_at).toBeNull();
  await page.locator('.nav-item',{hasText:'Календарь'}).click();
  await expect(page.locator('.cal-item',{hasText:'Без времени'})).toHaveCount(0);
- await expect(page.locator('.day-plan-task-list')).not.toContainText('Без времени');
+ await expect(page.locator('.backlog-task',{hasText:'Без времени'})).toHaveCount(1);
 });
 test('calendar requires a scheduled time',async({page})=>{
  await page.goto('/');
@@ -86,4 +86,35 @@ test('project headers fold independently and task cards show their goals',async(
  await expect(project.locator('.task-main')).toBeHidden();
  await project.locator(':scope > summary').click();
  await expect(project.locator('.task-main')).toBeVisible();
+});
+
+test('task state derives from time and completion instead of a manual status field',async({page})=>{
+ await page.goto('/');
+ await page.evaluate(key=>{
+  const data=JSON.parse(localStorage.getItem(key)),base=data.tasks[0];
+  data.tasks.push({...base,id:5101,title:'Активная без времени',status:'waiting',scheduled_at:null,recurrence:''});
+  data.tasks.push({...base,id:5102,title:'Назначенное время',status:'inbox',scheduled_at:'2026-12-01T10:00',recurrence:''});
+  data.tasks.push({...base,id:5103,title:'Старая отмена',status:'cancelled',scheduled_at:null,recurrence:''});
+  localStorage.setItem(key,JSON.stringify(data));
+ },KEY);
+ await page.reload();
+ await page.locator('.nav-item',{hasText:'Входящие'}).click();
+ await expect(page.locator('.task-main',{hasText:'Активная без времени'})).toBeVisible();
+ await expect(page.locator('.task-main',{hasText:'Назначенное время'})).toHaveCount(0);
+ await expect(page.locator('.task-main',{hasText:'Старая отмена'})).toHaveCount(0);
+ await page.locator('.task-main',{hasText:'Активная без времени'}).click();
+ const drawer=page.locator('.drawer');
+ await expect(drawer.getByLabel('Статус',{exact:true})).toHaveCount(0);
+ await drawer.getByRole('button',{name:'Сохранить'}).click();
+ await expect(drawer).toHaveCount(0);
+ expect((await storage(page)).tasks.find(t=>t.id===5101).status).toBe('inbox');
+ const row=page.locator('.task-row').filter({hasText:'Активная без времени'});
+ await row.locator('.task-check').click();
+ await expect(row).toHaveCount(0);
+ await page.locator('.nav-item',{hasText:'Все задачи'}).click();
+ const completed=page.locator('details.completed-group').first();
+ await completed.locator(':scope > summary').click();
+ await completed.locator('.task-row').filter({hasText:'Активная без времени'}).locator('.task-check').click();
+ await page.locator('.nav-item',{hasText:'Входящие'}).click();
+ await expect(page.locator('.task-main',{hasText:'Активная без времени'})).toBeVisible();
 });

@@ -14,11 +14,11 @@ test('quick capture enters inbox without scheduling',async({page})=>{
  expect(task).toBeDefined();expect(task.scheduled_at).toBeNull();expect(task.status).toBe('inbox');
  await expect(page.locator('.backlog-task',{hasText:'Моментальное дело'})).toHaveCount(1);
 });
-test('the day plan is adjacent to calendar and contains focus and workload',async({page})=>{
+test('calendar side panel contains backlog without duplicate focus or workload',async({page})=>{
  await page.goto('/');
  const panel=page.locator('.day-panel');
- await expect(panel.getByText('Три главных дела')).toBeVisible();
- await expect(panel.getByText('Загрузка дня')).toBeVisible();
+ await expect(panel.getByText('Три главных дела')).toHaveCount(0);
+ await expect(panel.getByText('Загрузка дня')).toHaveCount(0);
  await expect(page.locator('.backlog-toggle button')).toHaveAttribute('aria-expanded','true');
  await page.locator('.backlog-toggle button').click();
  await expect(page.locator('.backlog-toggle button')).toHaveAttribute('aria-expanded','false');

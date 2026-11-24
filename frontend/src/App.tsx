@@ -24,10 +24,10 @@ const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
  {id:'projects',title:'Проекты',icon:FolderKanban},{id:'goals',title:'Цели',icon:Target},
  {id:'areas',title:'Направления',icon:Target}
 ];
-const statuses:Record<string,string>={inbox:'Входящие',planned:'Запланировано',in_progress:'В работе',waiting:'Ожидаю',done:'Выполнено',someday:'Когда-нибудь',cancelled:'Отменено'};
 const projectStatuses:Record<string,string>={active:'Активен',paused:'Пауза',done:'Завершён',archived:'Архив'};
 const labels:Record<Kind,string>={areas:'направление',projects:'проект',goals:'цель',tasks:'задачу'};
 const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
+const isIncoming=(t:Task)=>isOpen(t)&&!t.scheduled_at;
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
 function percent(goal:Goal){if(goal.done)return 100;if(goal.measurable===0)return 0;const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
 
@@ -107,6 +107,9 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;delete payload.occurrence_date;delete payload.revision;
   if(kind==='goals'&&payload.measurable===0){delete payload.start_value;delete payload.target_value;delete payload.current_value;delete payload.unit;}
   if(kind==='tasks'){
+    // Completion is controlled only by the task checkmark. Scheduling determines the active state.
+    if(!instance&&payload.status!=='done'&&payload.status!=='cancelled')payload.status=payload.scheduled_at?'planned':'inbox';
+    if(instance)delete payload.status;
     Object.assign(payload,priorityFlags(Number(payload.priority??4)));
     payload.color=taskColor(String(payload.color??DEFAULT_TASK_COLOR));
   }
@@ -165,9 +168,9 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     <label className="form-field"><span><input type="checkbox" checked={Boolean(form.done)} onChange={e=>set('done',e.target.checked?1:0)}/> Цель достигнута</span></label></>}
    {kind==='tasks'&&<>
     {refs('goal_id','Цель',store.goals.filter(g=>!form.project_id||g.project_id===form.project_id||g.id===form.goal_id))}
-    <div className="two"><label className="form-field"><span>Приоритет</span><select value={Number(form.priority??4)} onChange={e=>set('priority',Number(e.target.value))}>
+    <label className="form-field"><span>Приоритет</span><select value={Number(form.priority??4)} onChange={e=>set('priority',Number(e.target.value))}>
      <option value={1}>P1 — важно и срочно</option><option value={2}>P2 — важно</option><option value={3}>P3 — срочно</option><option value={4}>P4 — прочее</option>
-    </select></label>{choices('status','Статус',statuses)}</div>
+    </select></label>
     <div className="form-field"><span>Цвет карточки задачи</span>
       <div className="task-color-choices" role="group" aria-label="Выбор из 8 цветов">
         {TASK_COLORS.map(item=><button type="button" key={item.hex} title={item.name} aria-label={item.name}
@@ -420,7 +423,7 @@ export default function App(){
  };
  const unschedule=async(t:Task)=>{
    if(t.recurrence)throw Error('Повторяющуюся задачу нельзя снять с расписания целиком: измените правило серии.');
-   await save('tasks',{scheduled_at:null,status:'inbox'},t.id,t.revision);
+   await save('tasks',{scheduled_at:null,status:isOpen(t)?'inbox':t.status},t.id,t.revision);
  };
  const tomorrowTask=async(t:Task)=>{
    await moveOrResizeTask(t,nextTaskDay(t));
@@ -438,7 +441,7 @@ export default function App(){
  const toggle=async(t:Task)=>{
   try{
     if(t.occurrence_date)await saveRecurring(t,{status:t.status==='done'?'planned':'done'},'one');
-    else await save('tasks',{status:t.status==='done'?'planned':'done'},t.id,t.revision);
+    else await save('tasks',{status:t.status==='done'?(t.scheduled_at?'planned':'inbox'):'done'},t.id,t.revision);
   }catch(e){setError(String(e))}
  };
  const open=(kind:Kind,defaults:Record<string,unknown>={})=>{
@@ -479,7 +482,7 @@ export default function App(){
   <aside className={'sidebar '+(mobile?'open':'')}>
    <div className="pm-sidebar-logo"><img src={import.meta.env.BASE_URL+'brand-icon-v2-192.png'} alt="PersonalManagement" width="36" height="36"/></div>
    <div className="nav-caption">ПЛАНИРОВАНИЕ</div>
-   <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{if(p.id==='schedule')goToDay(dayKey(new Date()));setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(t=>t.status==='inbox').length>0&&<em>{data.tasks.filter(t=>t.status==='inbox').length}</em>}</button>)}</nav>
+   <nav>{pages.map(p=><button key={p.id} className={'nav-item '+(page===p.id?'selected':'')} onClick={()=>{if(p.id==='schedule')goToDay(dayKey(new Date()));setPage(p.id);setSelectedProjectId(null);setMobile(false)}}><p.icon size={18}/>{p.title}{p.id==='inbox'&&data.tasks.filter(isIncoming).length>0&&<em>{data.tasks.filter(isIncoming).length}</em>}</button>)}</nav>
    <div className="sidebar-foot"><div>Открытых задач <strong>{active.length}</strong></div><div>Просроченных <strong>{overdue}</strong></div><button className="export-link" onClick={()=>api.download().catch(e=>setError(String(e)))}><Download size={15}/> Выгрузить данные JSON</button></div>
   </aside>
   {mobile&&<button className="nav-mask" onClick={()=>setMobile(false)} aria-label="Закрыть навигацию"/>}
@@ -561,7 +564,7 @@ export default function App(){
         onSchedule={async(task,when)=>{await moveOrResizeTask(task,{scheduled_at:when,status:'planned'});}}
         onOpen={task=>setEditing({kind:'tasks',record:task})}/>}
     </aside></div>}
-    {page==='inbox'&&<section className="content narrow"><div className="content-header"><div><h2>Входящие</h2></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><TaskList tasks={filtered.filter(t=>t.status==='inbox')} store={data} edit={setEditing} toggle={toggle} message="Входящие пусты"/></section>}
+    {page==='inbox'&&<section className="content narrow"><div className="content-header"><div><h2>Входящие</h2></div><button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить</button></div><TaskList tasks={filtered.filter(isIncoming)} store={data} edit={setEditing} toggle={toggle} message="Входящие пусты"/></section>}
     {page==='tasks'&&<section className="content task-groups-page">
       <div className="content-header"><div><h2>Все задачи</h2></div>
         <button className="primary-btn" onClick={()=>open('tasks')}><Plus size={16}/> Добавить задачу</button>
