@@ -443,3 +443,48 @@ def test_complete_goal_is_atomic_and_idempotent(monkeypatch):
         payload["values"]["amount"]=0
         assert client.post("/api/offline/execute",headers=headers,json=payload).status_code==200
         assert client.get("/api/bootstrap",headers=auth()).json()["goals"][0]["current_value"]==92
+
+
+def test_goal_contribution_reopen_and_repeat(monkeypatch):
+    import uuid
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    with TestClient(app) as client:
+        goal=client.post("/api/goals",headers=auth(),json={"title":"100 тренировок","start_value":0,"target_value":100,"current_value":24}).json()
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Тренировка","goal_id":goal["id"]}).json()
+        def op(action,revision,values):
+            payload={"operation_id":str(uuid.uuid4()),"action":action,"kind":"tasks","item_id":task["id"],"values":values}
+            headers={**auth(),"If-Match":str(revision)}
+            response=client.post("/api/offline/execute",headers=headers,json=payload)
+            assert response.status_code==200,response.text
+            assert client.post("/api/offline/execute",headers=headers,json=payload).json()==response.json()
+            return client.get("/api/bootstrap",headers=auth()).json()
+        values={"changes":{"status":"done"},"goal_id":goal["id"],"amount":1}
+        data=op("complete_goal",1,values)
+        assert data["goals"][0]["current_value"]==25 and data["goal_contributions"][0]["delta"]==1
+        data=op("save",2,{"status":"inbox"})
+        assert data["goals"][0]["current_value"]==24 and not data["goal_contributions"]
+        data=op("complete_goal",3,values)
+        assert data["goals"][0]["current_value"]==25
+        legacy=client.post("/api/tasks",headers=auth(),json={"title":"Старое выполнение","goal_id":goal["id"],"status":"done"}).json()
+        assert client.patch(f"/api/tasks/{legacy['id']}",headers={**auth(),"If-Match":str(legacy["revision"])},json={"status":"inbox"}).status_code==200
+        assert client.get("/api/bootstrap",headers=auth()).json()["goals"][0]["current_value"]==25
+
+def test_recurring_goal_contribution_isolated_and_capped(monkeypatch):
+    import uuid
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    with TestClient(app) as client:
+        goal=client.post("/api/goals",headers=auth(),json={"title":"Снижение","start_value":100,"target_value":80,"current_value":84}).json()
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Повтор","goal_id":goal["id"],"scheduled_at":"2026-11-25T09:00","recurrence":"daily"}).json()
+        def op(action,rev,day,values):
+            response=client.post("/api/offline/execute",headers={**auth(),"If-Match":str(rev)},json={"operation_id":str(uuid.uuid4()),"action":action,"kind":"tasks","item_id":task["id"],"day":day,"values":values})
+            assert response.status_code==200,response.text
+            return client.get("/api/bootstrap",headers=auth()).json()
+        values={"changes":{"status":"done"},"goal_id":goal["id"],"amount":3}
+        assert op("complete_goal",1,"2026-11-25",values)["goals"][0]["current_value"]==81
+        data=op("complete_goal",2,"2026-11-26",values)
+        assert data["goals"][0]["current_value"]==80
+        assert [x["delta"] for x in data["goal_contributions"]]==[-3,-1]
+        data=op("occurrence",3,"2026-11-26",{"status":"planned"})
+        assert data["goals"][0]["current_value"]==81 and len(data["goal_contributions"])==1
+        data=op("reset_occurrence",4,"2026-11-25",{})
+        assert data["goals"][0]["current_value"]==84 and not data["goal_contributions"]

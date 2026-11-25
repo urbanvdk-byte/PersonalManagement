@@ -117,6 +117,22 @@ const defaults:Record<Kind,Row>={
   goals:{area_id:null,project_id:null,description:'',period_start:null,period_end:null,start_value:0,target_value:1,current_value:0,unit:'',measurable:1,done:0},
   tasks:{area_id:null,project_id:null,goal_id:null,parent_id:null,notes:'',priority:4,important:0,urgent:0,status:'inbox',scheduled_at:null,due_at:null,duration_minutes:60,recurrence:'',recurrence_until:null,color:DEFAULT_TASK_COLOR}
 };
+function reverseGoalContribution(data:Store,taskId:number,day=''){
+ const entry=data.goal_contributions?.find(x=>x.task_id===taskId&&x.occurrence_date===day);
+ if(!entry)return;
+ const rest=(data.goal_contributions||[]).filter(x=>x!==entry);
+ data.goal_contributions=rest;
+ const goal=data.goals.find(g=>g.id===entry.goal_id);
+ if(!goal||!entry.delta)return;
+ goal.current_value-=entry.delta;
+ const reached=goal.target_value>=goal.start_value?goal.current_value>=goal.target_value:goal.current_value<=goal.target_value;
+ const automatic=entry.auto_done||rest.some(x=>x.goal_id===goal.id&&x.auto_done);
+ if(automatic&&!reached){
+  goal.done=0;
+  for(const x of rest)if(x.goal_id===goal.id)x.auto_done=false;
+ }
+ goal.revision=(goal.revision||1)+1;
+}
 async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number):Promise<void>{
   if('title' in values&&(!String(values.title||'').trim()))throw Error('Укажите название');
   if(kind==='projects' && values.area_ids!==undefined){
@@ -146,6 +162,8 @@ async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number
     checkRevision(Number(row.revision)||1,expectedRevision);
     if(kind==='tasks'&&String(values.recurrence??row.recurrence??'')&&!String(values.scheduled_at??row.scheduled_at??''))
       throw Error('Для повторяющейся задачи нужна дата и время');
+    if(kind==='tasks'&&row.status==='done'&&values.status!==undefined&&values.status!=='done')reverseGoalContribution(data,id);
+    if(kind==='goals'&&'done' in values)for(const x of data.goal_contributions||[])if(x.goal_id===id)x.auto_done=false;
     Object.assign(row,values);
     if(kind==='projects'){
       if(values.area_ids!==undefined)row.area_id=(values.area_ids as number[])[0]??null;
@@ -190,8 +208,12 @@ async function demoRemove(kind:Kind,id:number,expectedRevision?:number):Promise<
     data.tasks.forEach(x=>{if(x.project_id===id)x.project_id=null});
     data.goals.forEach(x=>{if(x.project_id===id)x.project_id=null});
   }
-  if(kind==='goals')data.tasks.forEach(x=>{if(x.goal_id===id)x.goal_id=null});
+  if(kind==='goals'){
+    data.tasks.forEach(x=>{if(x.goal_id===id)x.goal_id=null});
+    data.goal_contributions=(data.goal_contributions||[]).filter(x=>x.goal_id!==id);
+  }
   if(kind==='tasks'){
+    data.goal_contributions=(data.goal_contributions||[]).filter(x=>x.task_id!==id);
     data.checklist=(data.checklist||[]).filter(item=>item.task_id!==id);
     data.tasks.forEach(x=>{if(x.parent_id===id)x.parent_id=null});
     data.occurrences=(data.occurrences||[]).filter(x=>x.task_id!==id);
@@ -238,6 +260,8 @@ async function saveOccurrence(taskId:number,day:string,changes:Row,revision?:num
   if(changes.status!==undefined&&!['inbox','planned','in_progress','waiting','done','someday','cancelled'].includes(String(changes.status)))
     throw Error('Некорректный статус');
   const index=(data.occurrences||[]).findIndex(x=>x.task_id===taskId&&x.occurrence_date===day);
+  const prior=index>=0?data.occurrences![index].changes:{};
+  if((prior.status??task.status)==='done'&&changes.status!==undefined&&changes.status!=='done')reverseGoalContribution(data,taskId,day);
   if(index>=0)data.occurrences![index].changes={...data.occurrences![index].changes,...changes};
   else (data.occurrences ||= []).push({task_id:taskId,occurrence_date:day,changes});
   task.revision=(task.revision||1)+1;
@@ -252,6 +276,7 @@ async function resetOccurrence(taskId:number,day:string,revision?:number):Promis
   const task=data.tasks.find(x=>x.id===taskId);
   if(!task||!isOccurrenceDate(task,day))throw Error('Дата не относится к серии');
   checkRevision(task.revision,revision);
+  if(task.status!=='done')reverseGoalContribution(data,taskId,day);
   data.occurrences=(data.occurrences||[]).filter(x=>!(x.task_id===taskId&&x.occurrence_date===day));
   task.revision=(task.revision||1)+1;
   storeDemo(data);
@@ -273,6 +298,14 @@ async function splitSeries(taskId:number,day:string,changes:Row,revision?:number
   if(changes.scheduled_at)newTask.scheduled_at=String(changes.scheduled_at);
   if(!hasScheduledTime(newTask.scheduled_at)||!isValidTaskDuration(newTask.duration_minutes))
     throw Error('Некорректное начало новой серии');
+  if((newTask.status==='done'||newTask.status==='cancelled')&&changes.status===undefined)newTask.status='planned';
+  if(newTask.status!=='done')reverseGoalContribution(data,taskId,day);
+  for(const x of data.goal_contributions||[]){
+   if(x.task_id===taskId&&x.occurrence_date>=day){
+    x.task_id=nextId;
+    if(!newTask.recurrence&&x.occurrence_date===day)x.occurrence_date='';
+   }
+  }
   old.recurrence_until=beforeDate(day);
   old.revision=(old.revision||1)+1;
   data.tasks.push(newTask);
@@ -370,11 +403,13 @@ async function completeGoalLocal(taskId:number,day:string|undefined,values:Row,r
  const distance=Math.abs(g.target_value-g.start_value);
  const remaining=Math.max(0,(g.target_value-g.current_value)*direction);
  const advance=g.done?0:Math.min(remaining,g.measurable===0?amount*distance/100:amount);
+ const autoDone=advance>0&&g.measurable===0&&advance>=remaining;
  if(advance>0){
   g.current_value+=direction*advance;
-  if(g.measurable===0&&advance>=remaining)g.done=1;
+  if(autoDone)g.done=1;
   g.revision=(g.revision||1)+1;
  }
+ (updated.goal_contributions||=[]).push({task_id:taskId,occurrence_date:day||'',goal_id:g.id,delta:direction*advance,auto_done:autoDone});
  storeDemo(updated);
 }
 async function applyOffline(data:Store,operation:OfflineOperation):Promise<Store>{
@@ -408,8 +443,10 @@ async function applyOffline(data:Store,operation:OfflineOperation):Promise<Store
    if(!created)throw Error('Не найдена новая запись для офлайн-ID');
    const oldId=created.id;
    created.id=operation.temp_id;
-   if(operation.action==='split')
-    updated.occurrences=(updated.occurrences||[]).map(x=>x.task_id===oldId?{...x,task_id:operation.temp_id!}:x);
+   if(operation.action==='split'){
+     updated.occurrences=(updated.occurrences||[]).map(x=>x.task_id===oldId?{...x,task_id:operation.temp_id!}:x);
+     updated.goal_contributions=(updated.goal_contributions||[]).map(x=>x.task_id===oldId?{...x,task_id:operation.temp_id!}:x);
+    }
    if(kind==='projects')
     updated.activity=(updated.activity||[]).map(x=>x.project_id===oldId?{...x,project_id:operation.temp_id!}:x);
   }
