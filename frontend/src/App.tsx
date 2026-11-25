@@ -9,6 +9,7 @@ import DaySchedule from './DaySchedule';
 import CalendarBacklog from './CalendarBacklog';
 import TaskChecklist from './TaskChecklist';
 import PushSettings from './PushSettings';
+import GoalContribution from './GoalContribution';
 import {ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
@@ -30,12 +31,12 @@ const labels:Record<Kind,string>={areas:'направление',projects:'пр�
 const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
 const isIncoming=(t:Task)=>isOpen(t)&&!t.scheduled_at;
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
-function percent(goal:Goal){if(goal.done)return 100;if(goal.measurable===0)return 0;const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
+function percent(goal:Goal){if(goal.done)return 100;const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
 
 /** Prefer a goal's assigned direction; fall back to its project's directions.
  * Projects can have several directions, so display each without guessing.
  */
-function goalReached(goal:Goal){return Boolean(goal.done)||(goal.measurable!==0&&percent(goal)>=100)}
+function goalReached(goal:Goal){return Boolean(goal.done)||percent(goal)>=100}
 function goalDirections(goal:Goal,store:Store):Store['areas']{
  const assigned=store.areas.find(a=>a.id===goal.area_id);
  if(assigned)return [assigned];
@@ -49,8 +50,8 @@ function goalDirections(goal:Goal,store:Store):Store['areas']{
 type Scope='one'|'future'|'all';
 type DrawerProps={editing:Editing;store:Store;close:()=>void;save:(kind:Kind,data:Record<string,unknown>,id?:number,revision?:number)=>Promise<void>;remove:(kind:Kind,id:number,revision?:number)=>Promise<void>;
  saveRecurring:(task:Task,changes:Record<string,unknown>,scope:Scope)=>Promise<void>;removeRecurring:(task:Task,scope:Scope)=>Promise<void>;
- reload:()=>Promise<void>;unschedule:(task:Task)=>Promise<void>};
-function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,reload,unschedule}:DrawerProps){
+ reload:()=>Promise<void>;unschedule:(task:Task)=>Promise<void>;completeWithGoal:(task:Task,changes:Record<string,unknown>,goal:Goal)=>Promise<void>};
+function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,reload,unschedule,completeWithGoal}:DrawerProps){
  const {kind,record,defaults}=editing;
  const taskId=kind==='tasks'&&record?(store.tasks.some(t=>t.id===record.id)?record.id:store.local_id_map?.[record.id]??record.id):null;
  const [form,setForm]=useState<Record<string,unknown>>({...defaults,...record});
@@ -116,10 +117,14 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   }
   if(kind==='areas')payload.emoji=areaEmoji(String(payload.emoji??'📁'));
   try{
+    const goal=kind==='tasks'&&record&&payload.status==='done'&&(record as Task).status!=='done'
+      ?store.goals.find(g=>g.id===payload.goal_id):undefined;
     if(instance){
       const changed=Object.fromEntries(Object.entries(payload).filter(([key,value])=>value!==(record as unknown as Record<string,unknown>)[key]));
-      await saveRecurring(instance,changed,scope);
-    }else await save(kind,payload,record?.id,record?.revision);
+      if(goal&&scope==='one')await completeWithGoal(instance,changed,goal);
+      else await saveRecurring(instance,changed,scope);
+    }else if(goal)await completeWithGoal(record as Task,payload,goal);
+    else await save(kind,payload,record?.id,record?.revision);
     close();
   }catch(err){setError(err instanceof Error?err.message:String(err))}finally{setBusy(false)}
  }
@@ -287,7 +292,7 @@ function PriorityGroups({tasks,store,edit,toggle,add}:{tasks:Task[];store:Store;
   </details>
   {unassignedGoals.length>0&&<details className="completed-group goals-without-tasks" open>
     <summary className="priority-summary"><Target size={19}/><span className="priority-summary-text"><strong>Цели без задач</strong><small>Цели, для которых ещё не назначены задачи</small></span><span className="priority-count">{unassignedGoals.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
-    {unassignedGoals.map(goal=><button type="button" key={goal.id} className="project-linked-row" onClick={()=>edit({kind:'goals',record:goal})}><span><strong>{goalDirections(goal,store).map(a=>areaEmoji(a.emoji)).join(' ')} {goal.title}</strong><small>{store.projects.find(p=>p.id===goal.project_id)?.title||'Без проекта'}{goal.period_end?' · До '+fmtDate(goal.period_end):''}</small></span><span>{goalReached(goal)?'Достигнута':goal.measurable!==0?percent(goal)+'%':'В работе'}</span></button>)}
+    {unassignedGoals.map(goal=><button type="button" key={goal.id} className="project-linked-row" onClick={()=>edit({kind:'goals',record:goal})}><span><strong>{goalDirections(goal,store).map(a=>areaEmoji(a.emoji)).join(' ')} {goal.title}</strong><small>{store.projects.find(p=>p.id===goal.project_id)?.title||'Без проекта'}{goal.period_end?' · До '+fmtDate(goal.period_end):''}</small></span><span>{goalReached(goal)?'Достигнута':percent(goal)+'%'}</span></button>)}
   </details>}
   {cancelled.length>0&&<details className="completed-group cancelled-group">
     <summary className="priority-summary"><X size={19}/><span className="priority-summary-text"><strong>Отменённые</strong></span><span className="priority-count">{cancelled.length}</span><ChevronRight className="priority-chevron" size={18}/></summary>
@@ -339,7 +344,7 @@ function ProjectWorkspace({project,store,reload,onBack,onEdit,onCreate,onOpenTas
        <header><div><h3>Цели</h3><small>{goals.filter(goalReached).length} из {goals.length} достигнуты</small></div><button className="secondary-btn" onClick={()=>onCreate('goals')}><Plus size={15}/> Цель</button></header>
        {goals.length?goals.map(goal=><div key={goal.id} className="project-goal-row">
          <input type="checkbox" aria-label={'Цель достигнута: '+goal.title} checked={Boolean(goal.done)} disabled={goalBusy} onChange={e=>void goalAction(()=>api.save('goals',{done:e.target.checked?1:0},goal.id,goal.revision))}/>
-         <button className="project-linked-row" onClick={()=>onOpenGoal(goal)}><span><strong className={goal.done?'strike':''}>{goal.title}</strong><small>{goal.period_end?'До '+fmtDate(goal.period_end):'Без срока'}{goal.measurable!==0?' · '+goal.current_value+' / '+goal.target_value+' '+goal.unit:''}</small></span>{goal.measurable!==0&&<span>{percent(goal)}%</span>}</button>
+         <button className="project-linked-row" onClick={()=>onOpenGoal(goal)}><span><strong className={goal.done?'strike':''}>{goal.title}</strong><small>{goal.period_end?'До '+fmtDate(goal.period_end):'Без срока'}{goal.measurable!==0?' · '+goal.current_value+' / '+goal.target_value+' '+goal.unit:''}</small></span><span>{percent(goal)}%</span></button>
        </div>):<div className="empty">Целей пока нет</div>}
        <form className="milestone-add" onSubmit={e=>{e.preventDefault();if(!goalTitle.trim()||!goalDue)return;void goalAction(async()=>{await api.save('goals',{title:goalTitle.trim(),project_id:project.id,area_id:project.area_id,period_end:goalDue,measurable:0,done:0});setGoalTitle('');setGoalDue('');});}}>
          <input aria-label="Название новой цели" placeholder="Цель" value={goalTitle} onChange={e=>setGoalTitle(e.target.value)}/>
@@ -448,8 +453,16 @@ export default function App(){
    finally{setQuickBusy(false)}
  };
  const remove=async(kind:Kind,id:number,revision?:number)=>{await api.remove(kind,id,revision);await load()};
+ const [contribution,setContribution]=useState<{goal:Goal;resolve:(amount:number)=>void}|null>(null);
+ const completeWithGoal=async(task:Task,changes:Record<string,unknown>,goal:Goal)=>{
+   const amount=await new Promise<number>(resolve=>setContribution({goal,resolve}));
+   await api.completeGoal(task.id,task.occurrence_date,changes,goal.id,amount,task.revision??1);
+   await load();
+ };
  const toggle=async(t:Task)=>{
   try{
+    const goal=t.status!=='done'&&t.status!=='cancelled'?data.goals.find(g=>g.id===t.goal_id):undefined;
+    if(goal){await completeWithGoal(t,{status:'done'},goal);return;}
     if(t.occurrence_date)await saveRecurring(t,{status:t.status==='done'?'planned':'done'},'one');
     else await save('tasks',{status:t.status==='done'?(t.scheduled_at?'planned':'inbox'):'done'},t.id,t.revision);
   }catch(e){setError(String(e))}
@@ -628,7 +641,7 @@ export default function App(){
         {!data.projects.length&&<div className="empty-card">Создайте первый проект, затем привязывайте задачи, цели и направления.</div>}
         </div>
       </section>)}
-    {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Цели</h2></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} data-goal-id={g.id} className="entity-card goal-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{g.measurable===0?(g.done?'Достигнута':'В работе'):percent(g)+'%'}</span></header><div className="goal-title">{goalDirections(g,data).length>0&&<span className="goal-direction-icons">{goalDirections(g,data).map(a=><span key={a.id} className="goal-direction-emoji" role="img" aria-label={'Направление: '+a.title} title={'Направление: '+a.title}>{areaEmoji(a.emoji)}</span>)}</span>}<h3>{g.title}</h3></div><p>{groupName(g.project_id,data.projects)}</p>{g.measurable!==0&&<><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div></>}<div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую цель проекта или направления.</div>}</div></section>}
+    {page==='goals'&&<section className="content"><div className="content-header"><div><h2>Цели</h2></div><button className="primary-btn" onClick={()=>open('goals')}><Plus size={16}/> Цель</button></div><div className="cards">{data.goals.map(g=><button key={g.id} data-goal-id={g.id} className="entity-card goal-card" onClick={()=>setEditing({kind:'goals',record:g})}><header><Target size={21}/><span className="pill">{goalReached(g)?'Достигнута':percent(g)+'%'}</span></header><div className="goal-title">{goalDirections(g,data).length>0&&<span className="goal-direction-icons">{goalDirections(g,data).map(a=><span key={a.id} className="goal-direction-emoji" role="img" aria-label={'Направление: '+a.title} title={'Направление: '+a.title}>{areaEmoji(a.emoji)}</span>)}</span>}<h3>{g.title}</h3></div><p>{groupName(g.project_id,data.projects)}</p>{g.measurable!==0&&<><div className="goal-value">{g.current_value} <small>/ {g.target_value} {g.unit}</small></div><div className="progress"><div style={{width:percent(g)+'%'}}/></div></>}<div className="card-meta"><span>{g.period_start?fmtDate(g.period_start):'Без начала'}</span><span>{g.period_end?fmtDate(g.period_end):'Без конца'}</span></div></button>)}{!data.goals.length&&<div className="empty-card">Создайте первую цель проекта или направления.</div>}</div></section>}
     {page==='areas'&&<section className="content"><div className="content-header"><div><h2>Направления</h2></div><button className="primary-btn" onClick={()=>open('areas')}><Plus size={16}/> Направление</button></div><div className="cards">{data.areas.map(a=><button key={a.id} className="entity-card" onClick={()=>setEditing({kind:'areas',record:a})}><header><span className="area-dot area-emoji">{areaEmoji(a.emoji)}</span></header><h3>{a.title}</h3><p>{data.projects.filter(p=>p.area_ids?.includes(a.id)||p.area_id===a.id).length} проектов · {data.goals.filter(g=>g.area_id===a.id).length} целей</p><div className="card-meta"><span>{active.filter(t=>t.area_id===a.id).length} открытых задач</span></div></button>)}{!data.areas.length&&<div className="empty-card">Добавьте направления жизни, чтобы организовать проекты, цели и задачи.</div>}</div></section>}
     </>}
    </main>
@@ -646,6 +659,7 @@ export default function App(){
      </button>)}
      <button aria-label="Другие разделы" onClick={()=>setMobile(true)}><MoreHorizontal size={21}/><span>Ещё</span></button>
   </nav>
-  {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+'-'+((editing.record as Task|undefined)?.occurrence_date||'')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove} saveRecurring={saveRecurring} removeRecurring={removeRecurring} reload={load} unschedule={unschedule}/>} 
+  {editing&&<Drawer key={editing.kind+'-'+(editing.record?.id||'new')+'-'+((editing.record as Task|undefined)?.occurrence_date||'')+JSON.stringify(editing.defaults||{})} editing={editing} store={data} close={()=>setEditing(null)} save={save} remove={remove} saveRecurring={saveRecurring} removeRecurring={removeRecurring} reload={load} unschedule={unschedule} completeWithGoal={completeWithGoal}/>}
+  {contribution&&<GoalContribution goal={contribution.goal} onDecision={amount=>{const resolve=contribution.resolve;setContribution(null);resolve(amount)}}/>} 
  </div>
 }

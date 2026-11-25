@@ -72,6 +72,7 @@ test('completed tasks and meetings stay in the day timeline and can be reopened'
    const entry=schedule.locator('.schedule-entry').filter({has:page.getByRole('button',{name:title,exact:true})});
    const time=await entry.locator('.schedule-time-col').innerText();
    await complete.click();
+   if(title==='Обсудить план проекта')await page.getByRole('dialog',{name:'Вклад в цель'}).getByRole('button',{name:'НЕТ',exact:true}).click();
    const undo=schedule.getByRole('button',{name:'Отменить выполнение: '+title,exact:true});
    await expect(undo).toBeVisible();
    await expect(entry).toHaveClass(/schedule-entry-done/);
@@ -86,6 +87,7 @@ test('completed task remains gray in calendar and can be reopened in editor on d
  await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
  const title='Обсудить план проекта';
  await page.getByRole('button',{name:'Выполнить: '+title,exact:true}).click();
+ await page.getByRole('dialog',{name:'Вклад в цель'}).getByRole('button',{name:'НЕТ',exact:true}).click();
  await expect(page.getByRole('button',{name:'Отменить выполнение: '+title,exact:true})).toBeVisible();
  await page.locator('.nav-item',{hasText:'Календарь'}).click();
  const card=page.locator('.cal-item.task-block',{hasText:title});
@@ -103,9 +105,37 @@ test('completed task remains gray in calendar and can be reopened in editor on d
  await page.setViewportSize({width:390,height:844});
  await page.getByRole('navigation',{name:'Мобильная навигация'}).getByRole('button',{name:'День',exact:true}).click();
  await page.getByRole('button',{name:'Выполнить: '+title,exact:true}).click();
+ await page.getByRole('dialog',{name:'Вклад в цель'}).getByRole('button',{name:'НЕТ',exact:true}).click();
  await page.getByRole('button',{name:title,exact:true}).click();
  await expect(drawer.getByRole('checkbox',{name:/Задача выполнена/})).toBeChecked();
  await drawer.getByRole('checkbox',{name:/Задача выполнена/}).uncheck();
  await drawer.getByRole('button',{name:'Сохранить'}).click();
  await expect(page.getByRole('button',{name:'Выполнить: '+title,exact:true})).toBeVisible();
+});
+
+test('goal contribution is applied only when confirmed and zero is allowed',async({page})=>{
+ await page.goto('/');
+ await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+ const title='Обсудить план проекта';
+ const goal=async()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)||'{}').goals.find(g=>g.id===2).current_value,KEY);
+ const before=await goal();
+ const complete=page.getByRole('button',{name:'Выполнить: '+title,exact:true});
+ const undo=page.getByRole('button',{name:'Отменить выполнение: '+title,exact:true});
+ const modal=page.getByRole('dialog',{name:'Вклад в цель'});
+ await complete.click();
+ await modal.getByRole('spinbutton',{name:'Величина вклада'}).fill('2');
+ await modal.getByRole('button',{name:'ДА',exact:true}).click();
+ await expect(undo).toBeVisible();
+ expect(await goal()).toBe(before+2);
+ await undo.click();
+ await complete.click();
+ await modal.getByRole('spinbutton',{name:'Величина вклада'}).fill('1');
+ await modal.getByRole('button',{name:'НЕТ',exact:true}).click();
+ await expect(undo).toBeVisible();
+ expect(await goal()).toBe(before+2);
+ await undo.click();
+ await complete.click();
+ await modal.getByRole('button',{name:'ДА',exact:true}).click();
+ await expect(undo).toBeVisible();
+ expect(await goal()).toBe(before+2);
 });
