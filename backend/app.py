@@ -1090,7 +1090,7 @@ def subscribe_push(payload:dict[str,Any]):
 
 @app.post("/api/push/test")
 def test_push_delivery(payload:dict[str,Any]):
-    from push_reminders import deliver,private_key,validate_subscription,WebPushException
+    from push_reminders import deliver,private_key,validate_subscription,WebPushException,priority_label
     endpoint=payload.get("endpoint")
     if not isinstance(endpoint,str) or len(endpoint)>4096:
         raise HTTPException(422,"Некорректная подписка")
@@ -1101,7 +1101,7 @@ def test_push_delivery(payload:dict[str,Any]):
         subscription=validate_subscription(json.loads(row["subscription"]))
         key=private_key(conn)
     try:
-        deliver(subscription,{"title":"Тестовое напоминание","body":"P1 · Проверка оформления","priority":1,"tag":"pm-test","url":"/"},key)
+        deliver(subscription,{"title":"Тестовое напоминание","body":f"{priority_label(1)} · Проверка оформления","priority":1,"tag":"pm-test","url":"/"},key)
     except WebPushException as exc:
         code=exc.response.status_code if exc.response is not None else None
         if code in (404,410):

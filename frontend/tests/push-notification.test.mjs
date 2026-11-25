@@ -9,7 +9,9 @@ for(const priority of [1,2,3,4,null,5,'1']){
   const events={},calls=[];
   const self={registration:{scope:'https://example.org/PersonalManagement/',showNotification:async(title,options)=>calls.push({title,options})},addEventListener:(name,handler)=>events[name]=handler};
   runInNewContext(template,{self,URL});
-  const title='Переработать видео с Феликсом',body='15:30 · P1';
+  const markers={1:'🔴',2:'🟠',3:'🔵',4:'⚪'};
+   const title='Переработать видео с Феликсом';
+   const body=Number.isInteger(priority)&&markers[priority]?('15:30 · '+markers[priority]+' P'+priority):'15:30';
   let promise;
   events.push({data:{json:()=>({title,body,priority,tag:'task',url:'/?task=42'})},waitUntil:value=>promise=value});
   await promise;

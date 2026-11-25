@@ -95,14 +95,29 @@ def test_real_vapid_signature_and_transport(monkeypatch):
         assert request.headers["Content-Encoding"]=="aes128gcm"
 
 
-@pytest.mark.parametrize("priority",[1,2,3,4])
-def test_reminder_title_and_priority(monkeypatch,priority):
+@pytest.mark.parametrize("priority,emoji",[(1,"🔴"),(2,"🟠"),(3,"🔵"),(4,"⚪")])
+def test_reminder_title_and_priority(monkeypatch,priority,emoji):
     from push_reminders import send
     captured=[]
     monkeypatch.setattr("push_reminders.deliver",lambda sub,body,key:captured.append(body))
     task={"id":42,"title":"Переработать видео с Феликсом","priority":priority,
           "scheduled_at":"2026-11-25T15:30"}
     send({},task,"unused")
-    assert captured==[{"title":task["title"],"body":f"15:30 · P{priority}",
+    assert captured==[{"title":task["title"],"body":f"15:30 · {emoji} P{priority}",
                        "priority":priority,"tag":"42:2026-11-25T15:30",
                        "url":"/?task=42&day=2026-11-25"}]
+
+
+def test_manual_push_preview_has_visible_priority(monkeypatch):
+    from app import test_push_delivery
+    monkeypatch.setenv("APP_PASSWORD","testing")
+    setup()
+    sub=validate_subscription(subscription())
+    with connection() as conn:
+        conn.execute("INSERT INTO push_subscriptions(endpoint,subscription) VALUES (%s,%s)",
+                     (sub["endpoint"],json.dumps(sub)))
+    captured=[]
+    monkeypatch.setattr("push_reminders.deliver",lambda sub,body,key:captured.append(body))
+    assert test_push_delivery({"endpoint":sub["endpoint"]})["ok"] is True
+    assert captured==[{"title":"Тестовое напоминание","body":"🔴 P1 · Проверка оформления",
+                       "priority":1,"tag":"pm-test","url":"/"}]

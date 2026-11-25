@@ -93,10 +93,15 @@ def due_tasks(tasks,exceptions,now):
             result.append(task)
     return result
 
+PUSH_PRIORITY_EMOJI = {1: "🔴", 2: "🟠", 3: "🔵", 4: "⚪"}
+
+def priority_label(priority):
+    return f"{PUSH_PRIORITY_EMOJI[priority]} P{priority}"
+
 def send(subscription,task,key):
     when=task["scheduled_at"]
     identity=f"{task['id']}:{when}"
-    body={"title":task["title"],"body":f"{when[11:16]} · P{task['priority']}",
+    body={"title":task["title"],"body":f"{when[11:16]} · {priority_label(task['priority'])}",
           "priority":task["priority"],
           "tag":identity,"url":"/?"+urlencode({"task":task["id"],"day":when[:10]})}
     deliver(subscription,body,key)
