@@ -111,6 +111,9 @@ test('task state derives from time and completion instead of a manual status fie
  expect((await storage(page)).tasks.find(t=>t.id===5101).status).toBe('inbox');
  const row=page.locator('.task-row').filter({hasText:'Активная без времени'});
  await row.locator('.task-check').click();
+ const contribution=page.getByRole('dialog',{name:'Вклад в цель'});
+ await expect(contribution).toBeVisible();
+ await contribution.getByRole('button',{name:'НЕТ',exact:true}).click();
  await expect(row).toHaveCount(0);
  await page.locator('.nav-item',{hasText:'Все задачи'}).click();
  const completed=page.locator('details.completed-group').first();
