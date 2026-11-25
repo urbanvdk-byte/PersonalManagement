@@ -351,6 +351,32 @@ async function removeExtra(kind:ExtraKind,parentId:number,id:number,revision?:nu
 
 
 /** Run the existing local edit rules against an isolated IndexedDB snapshot. */
+async function completeGoalLocal(taskId:number,day:string|undefined,values:Row,revision?:number){
+ const data=loadDemo();
+ const task=data.tasks.find(t=>t.id===taskId);
+ if(!task)throw Error('Задача не найдена');
+ checkRevision(task.revision,revision);
+ const effective={...task,...(day?data.occurrences?.find(x=>x.task_id===taskId&&x.occurrence_date===day)?.changes:{})};
+ const changes=values.changes as Row;
+ const goal=data.goals.find(g=>g.id===values.goal_id);
+ const amount=Number(values.amount);
+ if(!goal||effective.status==='done'||effective.status==='cancelled'||(changes.goal_id===undefined?effective.goal_id:changes.goal_id)!==goal.id||!Number.isFinite(amount)||amount<0||amount>1e12)throw Error('Некорректный вклад в цель');
+ // Update both records in the same local draft/IndexedDB transaction.
+ if(day)await saveOccurrence(taskId,day,changes,revision);
+ else await demoSave('tasks',changes,taskId,revision);
+ const updated=loadDemo();
+ const g=updated.goals.find(x=>x.id===goal.id)!;
+ const direction=g.target_value>=g.start_value?1:-1;
+ const distance=Math.abs(g.target_value-g.start_value);
+ const remaining=Math.max(0,(g.target_value-g.current_value)*direction);
+ const advance=g.done?0:Math.min(remaining,g.measurable===0?amount*distance/100:amount);
+ if(advance>0){
+  g.current_value+=direction*advance;
+  if(g.measurable===0&&advance>=remaining)g.done=1;
+  g.revision=(g.revision||1)+1;
+ }
+ storeDemo(updated);
+}
 async function applyOffline(data:Store,operation:OfflineOperation):Promise<Store>{
  if(offlineDraft!==null)throw Error('Одновременная локальная операция не поддерживается');
  offlineDraft=structuredClone(data);
@@ -362,6 +388,7 @@ async function applyOffline(data:Store,operation:OfflineOperation):Promise<Store
    (offlineDraft[kind as Kind] as Array<{id:number}>).map(x=>x.id)
   );
   switch(operation.action){
+   case 'complete_goal':await completeGoalLocal(operation.item_id!,operation.day,operation.values,operation.revision);break;
    case 'save':await demoSave(kind as Kind,{...operation.values},operation.item_id,operation.revision);break;
    case 'remove':await demoRemove(kind as Kind,operation.item_id!,operation.revision);break;
    case 'occurrence':await saveOccurrence(operation.item_id!,operation.day!,{...operation.values},operation.revision);break;
@@ -398,6 +425,10 @@ export const api={
   download,
   resetDemo,
   offline:offlineEngine,
+  completeGoal:(taskId:number,day:string|undefined,changes:Row,goalId:number,amount:number,revision?:number)=>{
+   const values={changes,goal_id:goalId,amount};
+   return isDemo?completeGoalLocal(taskId,day,values,revision):offlineEngine.mutate({action:'complete_goal',kind:'tasks',item_id:taskId,day,values,revision});
+  },
   saveOccurrence,
   resetOccurrence,
   splitSeries,

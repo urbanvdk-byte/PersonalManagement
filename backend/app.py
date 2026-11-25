@@ -861,6 +861,38 @@ def remove_milestone(project_id:int,item_id:int,request:Request):
 # Every queued offline mutation is applied together with its receipt in ONE
 # PostgreSQL transaction. Replaying the same operation after a lost HTTP response
 # returns the original result instead of creating a duplicate.
+def complete_goal_task(conn,task_id,day,values,request):
+    # This handler runs inside the same transaction as the idempotency receipt.
+    changes=values.get("changes")
+    goal_id=values.get("goal_id")
+    amount=values.get("amount")
+    if set(values)!={"changes","goal_id","amount"} or not isinstance(changes,dict) or changes.get("status")!="done" or type(goal_id) is not int or type(amount) not in (float,int) or not 0<=amount<=1e12:
+        raise HTTPException(422,"Некорректный вклад в цель")
+    master=series_task(conn,task_id,day) if day else fetch_one(conn,"tasks",task_id)
+    require_current_revision(request,master)
+    effective=dict(master)
+    if day:
+        row=conn.execute("SELECT changes FROM task_occurrences WHERE task_id=%s AND occurrence_date=%s",(task_id,day)).fetchone()
+        if row:effective.update(json.loads(row["changes"]))
+    if effective["status"] in ("done","cancelled"):
+        raise HTTPException(409,"Задача уже завершена или отменена")
+    if changes.get("goal_id",effective.get("goal_id"))!=goal_id:
+        raise HTTPException(409,"Связь задачи с целью изменилась")
+    goal=fetch_one(conn,"goals",goal_id)
+    if amount and not goal["done"]:
+        start,target,current=goal["start_value"],goal["target_value"],goal["current_value"]
+        direction=1 if target>=start else -1
+        distance=abs(target-start)
+        if goal["measurable"]==0:
+            amount=amount*distance/100
+        remaining=max(0,(target-current)*direction)
+        advance=min(amount,remaining)
+        if advance>0:
+            new_value=current+direction*advance
+            reached=int(goal["measurable"]==0 and advance>=remaining)
+            conn.execute("UPDATE goals SET current_value=%s,done=CASE WHEN %s=1 THEN 1 ELSE done END,revision=revision+1 WHERE id=%s",(new_value,reached,goal_id))
+    return put_occurrence(task_id,day,{"changes":changes},request) if day else update("tasks",task_id,changes,request)
+
 @app.post("/api/offline/execute")
 def execute_offline_operation(payload: dict[str, Any], request: Request):
     allowed = {"operation_id", "action", "kind", "item_id", "parent_id", "day", "values"}
@@ -879,7 +911,7 @@ def execute_offline_operation(payload: dict[str, Any], request: Request):
     day = payload.get("day")
     values = payload.get("values", {})
     if action not in {"save", "remove", "occurrence", "reset_occurrence", "split",
-                      "extra_add", "extra_update", "extra_remove"}:
+                      "extra_add", "extra_update", "extra_remove", "complete_goal"}:
         raise HTTPException(422, "Неизвестное офлайн-действие")
     if not isinstance(values, dict) or len(json.dumps(values, ensure_ascii=False)) > 100_000:
         raise HTTPException(422, "Некорректные данные операции")
@@ -889,10 +921,10 @@ def execute_offline_operation(payload: dict[str, Any], request: Request):
         if action == "remove" or item_id is not None:
             if not isinstance(item_id, int) or item_id <= 0:
                 raise HTTPException(422, "Некорректный ID записи")
-    elif action in {"occurrence", "reset_occurrence", "split"}:
+    elif action in {"occurrence", "reset_occurrence", "split", "complete_goal"}:
         if kind != "tasks" or not isinstance(item_id, int) or item_id <= 0:
             raise HTTPException(422, "Некорректный ID задачи")
-        if not isinstance(day, str) or len(day) != 10:
+        if (action != "complete_goal" or day is not None) and (not isinstance(day, str) or len(day) != 10):
             raise HTTPException(422, "Некорректная дата повторения")
     else:
         if kind not in {"checklist", "milestones"}:
@@ -902,7 +934,7 @@ def execute_offline_operation(payload: dict[str, Any], request: Request):
         if action != "extra_add" and (not isinstance(item_id, int) or item_id <= 0):
             raise HTTPException(422, "Некорректный ID элемента")
     changes_existing = (
-        action in {"remove", "occurrence", "reset_occurrence", "split", "extra_update", "extra_remove"}
+        action in {"remove", "occurrence", "reset_occurrence", "split", "extra_update", "extra_remove", "complete_goal"}
         or action == "save" and item_id is not None
     )
     if changes_existing:
@@ -930,6 +962,8 @@ def execute_offline_operation(payload: dict[str, Any], request: Request):
             elif action == "remove":
                 delete(kind, item_id, request)
                 result = None
+            elif action == "complete_goal":
+                result = complete_goal_task(conn,item_id,day,values,request)
             elif action == "occurrence":
                 result = put_occurrence(item_id, day, {"changes": values}, request)
             elif action == "reset_occurrence":
@@ -948,7 +982,7 @@ def execute_offline_operation(payload: dict[str, Any], request: Request):
                     remove_milestone(parent_id, item_id, request)
                 result = None
             revision = None
-            if action in {"occurrence", "reset_occurrence", "split"}:
+            if action in {"occurrence", "reset_occurrence", "split", "complete_goal"}:
                 revision = fetch_one(conn, "tasks", item_id)["revision"]
             elif action in {"save", "extra_update"} and isinstance(result, dict):
                 revision = result.get("revision")

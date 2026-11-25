@@ -1,7 +1,7 @@
 import type {Kind,Store} from './types';
 
 /** Offline-first production data engine. GitHub Pages still uses its separate demo store. */
-export type OfflineAction = 'save'|'remove'|'occurrence'|'reset_occurrence'|'split'|'extra_add'|'extra_update'|'extra_remove';
+export type OfflineAction = 'save'|'remove'|'occurrence'|'reset_occurrence'|'split'|'extra_add'|'extra_update'|'extra_remove'|'complete_goal';
 export type OfflineOperation = {
  operation_id:string;sequence:number;action:OfflineAction;
  kind:Kind|'events'|'checklist'|'milestones';item_id?:number;parent_id?:number;
