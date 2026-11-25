@@ -176,3 +176,20 @@ test('checklist survives offline creation, ID remapping and edits in an open tas
  expect(items.map(c=>c.title).sort()).toEqual([item,second].sort());
  expect(items.find(c=>c.title===item).done).toBe(0);
 });
+
+test('an open client receives changes made on another client within seconds',async({page})=>{
+ await page.goto('/');
+ await expect(page.getByText('Данные синхронизированы')).toBeVisible();
+ const title='Синхронизация другого устройства '+Date.now();
+ const response=await page.request.post('/api/tasks',{data:{title,priority:4,status:'inbox'}});
+ expect(response.ok()).toBeTruthy();
+ const task=await response.json();
+ try{
+  await expect(page.locator('.backlog-task',{hasText:title})).toBeVisible({timeout:8000});
+  const change=await page.request.patch('/api/tasks/'+task.id,{data:{title:title+' обновлено'}});
+  expect(change.ok()).toBeTruthy();
+  await expect(page.locator('.backlog-task',{hasText:title+' обновлено'})).toBeVisible({timeout:8000});
+ }finally{
+  await page.request.delete('/api/tasks/'+task.id);
+ }
+});

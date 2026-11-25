@@ -272,10 +272,23 @@ export class OfflineEngine {
   }
   window.addEventListener('online',()=>void this.syncNow());
   window.addEventListener('offline',()=>this.update('offline',networkMessage));
-  window.addEventListener('visibilitychange',()=>{
-   if(document.visibilityState==='visible')void this.syncNow();
-  });
-  window.setInterval(()=>{if(navigator.onLine)void this.syncNow();},30000);
+  const refreshVisible=()=>{
+   if(document.visibilityState==='visible'&&navigator.onLine)void this.syncNow();
+  };
+  document.addEventListener('visibilitychange',refreshVisible);
+  window.addEventListener('focus',refreshVisible);
+  window.addEventListener('pageshow',refreshVisible);
+  // Keep open devices current without repeatedly fetching in a hidden tab.
+  // Network/auth failures retain a slower retry interval.
+  let lastPoll=0;
+  window.setInterval(()=>{
+   if(!navigator.onLine||document.visibilityState!=='visible'||this.active)return;
+   const now=Date.now();
+   const slow=['offline','auth','error','conflict'].includes(this.current.mode);
+   if(now-lastPoll<(slow?30000:3000))return;
+   lastPoll=now;
+   void this.syncNow();
+  },1000);
   void this.count();
  }
  private broadcast():void{this.channel?.postMessage('updated');emitChange();}
