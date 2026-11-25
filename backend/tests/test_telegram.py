@@ -69,7 +69,7 @@ def test_morning_html_and_direction_emojis(monkeypatch):
         key,body=report(conn,"morning",at("2026-11-25T08:00"))
     assert key=="morning:2026-11-25"
     assert "Среда, 25 ноября 2026" in body
-    assert "3 задач · 9 ч 00 мин" in body and "Высокая нагрузка" in body
+    assert "3 задачи · 9 ч 00 мин" in body and "Высокая нагрузка" in body
     assert "<b>12:30</b> · 🟠 P2\n🏋️ A &amp; &lt;B&gt;" in body
     assert "<b>15:30</b> · 🔴 P1\n💼 Видео" in body
     assert "<b>18:00</b> · ⚪ P4\n📁 Ужин" in body
@@ -109,3 +109,14 @@ def test_legacy_morning_outbox_remains_plain(monkeypatch):
     monkeypatch.setattr("telegram_digest.transmit",sent.append)
     assert process("morning",at("2026-11-25T08:00"),False)
     assert sent==["Старый текст <без HTML>"]
+
+
+def test_morning_pages_keep_task_rows_together():
+    from telegram_digest import morning_pages
+    tasks = [f"<b>12:30</b> · 🔴 P1\n📁 Задача {i}: " + "😀"*150 for i in range(80)]
+    message = "\n\n".join(tasks)
+    pages = morning_pages(message)
+    assert len(pages)>1
+    assert "\n\n".join(pages)==message
+    assert all(len(page.encode("utf-16-le"))//2<=3800 for page in pages)
+    assert all(page.startswith("<b>12:30</b>") for page in pages)

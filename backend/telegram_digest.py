@@ -109,6 +109,11 @@ def goal_achieved(goal):
     start, target, current = goal["start_value"], goal["target_value"], goal["current_value"]
     return bool(goal.get("done")) or (current >= target if target >= start else current <= target)
 
+def task_count(count):
+    ending = "задач" if 11 <= count % 100 <= 14 else (
+        "задача" if count % 10 == 1 else "задачи" if 2 <= count % 10 <= 4 else "задач")
+    return f"{count} {ending}"
+
 def morning_report(conn, today, scheduled, backlog, overdue):
     # Tasks have no separate emoji field: use their assigned direction, then
     # their goal's direction, then the linked project's directions.
@@ -139,7 +144,7 @@ def morning_report(conn, today, scheduled, backlog, overdue):
     separator = "────────────"
     lines = ["<b>☀️ План дня</b>",
              f"<i>{WEEKDAYS[today.weekday()]}, {today.day} {MONTHS[today.month-1]} {today.year}</i>",
-             "", f"<b>📋 {len(scheduled)} задач · {hours(load)}</b>"]
+             "", f"<b>📋 {task_count(len(scheduled))} · {hours(load)}</b>"]
     if load > 480:
         lines.append("⚠️ Высокая нагрузка")
     lines += ["", "   ".join(f"{PRIORITY_EMOJI[p]} P{p}: <b>{counts[p]}</b>" for p in range(1,5))]
@@ -265,13 +270,28 @@ def chunks(text):
         result.append(part)
     return result
 
+def morning_pages(message):
+    # Keep the time/priority and its task title in the same Telegram message.
+    # Paragraphs contain independent, balanced HTML tags.
+    pages, current = [], ""
+    for paragraph in message.split("\n\n"):
+        joined = current + ("\n\n" if current else "") + paragraph
+        if current and len(joined.encode("utf-16-le"))//2 > 3800:
+            pages.append(current)
+            current = paragraph
+        else:
+            current = joined
+    if current:
+        pages.append(current)
+    return pages
+
 def process(mode, now, dry_run):
     if mode in ("evening","reminders"):
         return []  # Old cron jobs are harmless.
     with connection() as conn:
         key,message = report(conn,mode,now)
         if dry_run:
-            return chunks(message)
+            return morning_pages(message) if mode == "morning" else chunks(message)
         # Independent lock: never hold the application's write lock over network I/O.
         conn.execute("SELECT pg_advisory_xact_lock(1648246156)")
         if conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(key,)).fetchone():
@@ -279,7 +299,7 @@ def process(mode, now, dry_run):
         # Freeze the text, its format and page boundaries before first send.
         # Old plain-text outbox entries remain valid across this deployment.
         if mode == "morning":
-            message = json.dumps({"format":MORNING_FORMAT,"pages":chunks(message)},ensure_ascii=False)
+            message = json.dumps({"format":MORNING_FORMAT,"pages":morning_pages(message)},ensure_ascii=False)
         conn.execute("""INSERT INTO telegram_report_outbox(message_key,message) VALUES (%s,%s)
                         ON CONFLICT DO NOTHING""",(key,message))
         message = conn.execute("SELECT message FROM telegram_report_outbox WHERE message_key=%s",(key,)).fetchone()["message"]
