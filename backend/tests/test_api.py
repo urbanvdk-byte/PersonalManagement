@@ -419,3 +419,27 @@ def test_unified_goals_and_event_completion(monkeypatch):
         assert res.status_code==200,res.text
         saved=next(t for t in client.get("/api/bootstrap",headers=auth()).json()["tasks"] if t["id"]==task["id"])
         assert saved["status"]=="done" and saved["scheduled_at"]==task["scheduled_at"]
+
+
+def test_complete_goal_is_atomic_and_idempotent(monkeypatch):
+    import uuid
+    monkeypatch.setenv("APP_PASSWORD","local-test-secret")
+    with TestClient(app) as client:
+        goal=client.post("/api/goals",headers=auth(),json={"title":"Снизить показатель","start_value":100,"target_value":80,"current_value":95}).json()
+        task=client.post("/api/tasks",headers=auth(),json={"title":"Шаг к цели","goal_id":goal["id"]}).json()
+        payload={"operation_id":str(uuid.uuid4()),"action":"complete_goal","kind":"tasks","item_id":task["id"],"values":{"changes":{"status":"done"},"goal_id":goal["id"],"amount":3}}
+        headers={**auth(),"If-Match":"1"}
+        first=client.post("/api/offline/execute",headers=headers,json=payload)
+        assert first.status_code==200,first.text
+        assert client.post("/api/offline/execute",headers=headers,json=payload).json()==first.json()
+        data=client.get("/api/bootstrap",headers=auth()).json()
+        assert data["tasks"][0]["status"]=="done"
+        assert data["goals"][0]["current_value"]==92
+        payload["operation_id"]=str(uuid.uuid4())
+        assert client.post("/api/offline/execute",headers={**auth(),"If-Match":"2"},json=payload).status_code==409
+        assert client.get("/api/bootstrap",headers=auth()).json()["goals"][0]["current_value"]==92
+        second=client.post("/api/tasks",headers=auth(),json={"title":"Без вклада","goal_id":goal["id"]}).json()
+        payload.update(operation_id=str(uuid.uuid4()),item_id=second["id"])
+        payload["values"]["amount"]=0
+        assert client.post("/api/offline/execute",headers=headers,json=payload).status_code==200
+        assert client.get("/api/bootstrap",headers=auth()).json()["goals"][0]["current_value"]==92
