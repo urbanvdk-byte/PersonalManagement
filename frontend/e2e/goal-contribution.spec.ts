@@ -5,7 +5,7 @@ test('mobile day: completing, reopening and recompleting a recurring task change
  try{
   const page=await context.newPage();
   await page.goto('/');
-  await expect(page.getByRole('heading',{name:'День',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Расписание дня',exact:true})).toBeVisible();
   const storage='personalmanagement:pages-demo:v1';
   await page.evaluate(key=>{
    const data=JSON.parse(localStorage.getItem(key)!);
