@@ -174,3 +174,13 @@ def test_empty_report_and_long_monthly_pages(monkeypatch):
     assert "\n\n".join(pages)==monthly
     assert all(len(page.encode("utf-16-le"))//2<=3800 for page in pages)
     assert all(page.count("<b>")==page.count("</b>") for page in pages)
+
+
+def test_long_single_section_is_paginated():
+    from telegram_digest import morning_pages
+    lines = [f"• <b>Цель {i}</b> " + "😀"*150 for i in range(100)]
+    pages = morning_pages("\n".join(lines))
+    assert len(pages)>1
+    assert "\n".join(pages)=="\n".join(lines)
+    assert all(len(p.encode("utf-16-le"))//2<=3800 for p in pages)
+    assert all(p.count("<b>")==p.count("</b>") for p in pages)

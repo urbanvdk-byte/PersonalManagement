@@ -336,6 +336,17 @@ def morning_pages(message):
     # Paragraphs contain independent, balanced HTML tags.
     pages, current = [], ""
     for paragraph in message.split("\n\n"):
+        # A long list (e.g. overdue goals) can exceed one message on its own.
+        # Every generated HTML line has balanced tags, so split such lists
+        # between lines rather than sending an oversized Telegram payload.
+        if len(paragraph.encode("utf-16-le"))//2 > 3800:
+            if current:
+                pages.append(current)
+                current = ""
+            parts = chunks(paragraph)
+            pages.extend(parts[:-1])
+            current = parts[-1]
+            continue
         joined = current + ("\n\n" if current else "") + paragraph
         if current and len(joined.encode("utf-16-le"))//2 > 3800:
             pages.append(current)
