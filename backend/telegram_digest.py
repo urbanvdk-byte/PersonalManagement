@@ -22,6 +22,11 @@ PRIORITY_EMOJI = {1:"🔴",2:"🟠",3:"🔵",4:"⚪"}
 WEEKDAYS = ("Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье")
 MONTHS = ("января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря")
 MORNING_FORMAT = "pm-morning-html-v1"
+REPORT_FORMATS = {"morning": MORNING_FORMAT, "weekly": "pm-weekly-html-v1",
+                  "monthly": "pm-monthly-html-v1"}
+REPORT_MONTHS = ("Январь","Февраль","Март","Апрель","Май","Июнь",
+                 "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь")
+SEPARATOR = "────────────"
 
 def open_status(task):
     return task["status"] not in ("done", "cancelled")
@@ -91,17 +96,52 @@ def area_minutes(rows):
 def period_label(start, end):
     return start.strftime("%d.%m.%Y") + " — " + end.strftime("%d.%m.%Y")
 
+def bar(value, total, width=10):
+    # Telegram supports plain Unicode symbols, not native graphical bars.
+    filled = min(width, max(0, int(value * width / total + 0.5))) if total else 0
+    return "🟩" * filled + "⬜" * (width-filled)
+
+def section(lines, title):
+    lines.extend(["", SEPARATOR, f"<b>{title}</b>", ""])
+
+def summary_lines(rows):
+    total, done = len(rows), done_count(rows)
+    return [f"<b>{percent(done,total)} выполнено</b>" if total else "<b>Нет запланированных задач</b>",
+            bar(done,total), "",
+            f"📋 Запланировано: <b>{task_count(total)}</b>",
+            f"✅ Выполнено: <b>{task_count(done)}</b>",
+            f"⭕ Не выполнено: <b>{task_count(total-done)}</b>",
+            f"⏱ Плановое время: <b>{hours(minutes(rows))}</b>"]
+
+def area_name(areas, key):
+    area = areas.get(key)
+    if not area:
+        return "📁 Без направления"
+    return escape((area["emoji"] or "").strip() or "📁", quote=False) + " " + escape(label(area["title"]), quote=False)
+
 def area_lines(rows, areas):
     totals = area_minutes(rows)
-    if not totals:
-        return ["• Нет запланированного времени"]
-    return [f"• {label(areas.get(key, 'Без направления'))}: {hours(value)} ({percent(value, minutes(rows))})"
-            for key, value in totals.most_common()]
+    if not totals or not minutes(rows):
+        return ["Нет запланированного времени"]
+    lines = []
+    for key, value in totals.most_common():
+        lines += [f"<b>{area_name(areas,key)}</b>",
+                  f"{hours(value)} · {percent(value,minutes(rows))}",
+                  bar(value,minutes(rows)), ""]
+    return lines[:-1]
+
+def signed_hours(value):
+    return ("+" if value > 0 else "−" if value < 0 else "") + hours(abs(value))
 
 def delta_lines(rows, previous):
-    return [f"• Запланировано: {len(rows)-len(previous):+d} задач",
-            f"• Выполнено из запланированных: {done_count(rows)-done_count(previous):+d} задач",
-            f"• Запланированное время: {(minutes(rows)-minutes(previous))/60:+.1f} ч"]
+    return [f"Запланировано: <b>{len(previous)} → {len(rows)}</b> ({len(rows)-len(previous):+d})",
+            f"Выполнено: <b>{done_count(previous)} → {done_count(rows)}</b> ({done_count(rows)-done_count(previous):+d})",
+            f"Плановое время: <b>{hours(minutes(previous))} → {hours(minutes(rows))}</b> ({signed_hours(minutes(rows)-minutes(previous))})"]
+
+def project_name(project, areas, linked):
+    ids = linked.get(project["id"]) or ([project["area_id"]] if project["area_id"] is not None else [])
+    emojis = list(dict.fromkeys((areas[i]["emoji"] or "").strip() or "📁" for i in ids if i in areas))[:4]
+    return escape(" ".join(emojis) or "📁", quote=False) + " " + escape(label(project["title"]), quote=False)
 
 def goal_achieved(goal):
     if not goal.get("measurable", 1):
@@ -181,31 +221,35 @@ def report(conn, mode, now):
         overdue = [t for t in tasks if open_status(t) and t.get("due_at")
                    and datetime.fromisoformat(t["due_at"]).replace(tzinfo=None) < now.replace(tzinfo=None)]
         return "morning:" + day, morning_report(conn, today, scheduled, backlog, overdue)
-    areas = {r["id"]: r["title"] for r in conn.execute("SELECT id,title FROM areas")}
+    areas = {r["id"]: r for r in conn.execute("SELECT id,title,emoji FROM areas")}
     if mode == "weekly":
         start = today - timedelta(days=today.weekday())
         end = start + timedelta(days=4)
-        # Manual previews on earlier days show only elapsed days.
+        # Compare the same elapsed weekdays, retaining the Monday–Friday scope.
         through = min(today, end)
         rows = period_rows(tasks, exceptions, start, through)
         previous = period_rows(tasks, exceptions, start-timedelta(days=7), through-timedelta(days=7))
-        done = done_count(rows)
-        lines = ["📊 Итоги недели · " + period_label(start, through),
-                 f"Запланировано: {len(rows)} · выполнено: {done} ({percent(done,len(rows))})",
-                 f"Запланированное время: {hours(minutes(rows))}", "", "По дням (выполнено / запланировано):"]
+        lines = ["<b>📊 Итоги недели</b>", f"<i>{period_label(start,through)}</i>",
+                 "", SEPARATOR, *summary_lines(rows)]
+        section(lines, "📅 Динамика по дням")
         cursor = start
         names = ("Пн","Вт","Ср","Чт","Пт","Сб","Вс")
         while cursor <= through:
             daily = [t for t in rows if t["scheduled_at"][:10] == cursor.isoformat()]
-            lines.append(f"• {names[cursor.weekday()]} {cursor.strftime('%d.%m')}: {done_count(daily)}/{len(daily)}")
+            done = done_count(daily)
+            lines += [f"<b>{names[cursor.weekday()]}, {cursor.strftime('%d.%m')}</b> · {done}/{len(daily)}",
+                      bar(done,len(daily),5)]
             cursor += DAY
-        lines += ["", "По приоритетам:"]
+        section(lines, "🎯 Выполнение по приоритетам")
         for p in range(1,5):
             group = [t for t in rows if t["priority"] == p]
-            lines.append(f"• P{p}: {done_count(group)}/{len(group)}")
-        lines += ["", "Запланированное время по направлениям:", *area_lines(rows,areas),
-                  "", "Изменение к предыдущей неделе:", *delta_lines(rows,previous),
-                  "", "По текущим записям календаря; переносы и удаления могут изменить прошлые показатели.", URL]
+            done = done_count(group)
+            lines.append(f"{PRIORITY_EMOJI[p]} P{p} · <b>{done} из {len(group)}</b> · {percent(done,len(group))}")
+        section(lines, "🧭 Распределение планового времени")
+        lines += area_lines(rows,areas)
+        section(lines, "📈 К предыдущей неделе")
+        lines += delta_lines(rows,previous)
+        lines += ["", "<i>По текущим записям календаря; переносы и удаления могут изменить прошлые показатели.</i>"]
         return "weekly:" + start.isoformat(), "\n".join(lines)
     if mode == "monthly":
         end = today.replace(day=1)-DAY
@@ -214,32 +258,49 @@ def report(conn, mode, now):
         previous_start = previous_end.replace(day=1)
         rows = period_rows(tasks, exceptions, start, end)
         previous = period_rows(tasks, exceptions, previous_start, previous_end)
-        lines = ["🎯 Итоги месяца · " + period_label(start,end),
-                 f"Запланировано: {len(rows)} · выполнено: {done_count(rows)} ({percent(done_count(rows),len(rows))})",
-                 f"Запланированное время: {hours(minutes(rows))}", "", "Проекты — выполнено / запланировано за месяц:"]
-        projects = list(conn.execute("SELECT id,title,status FROM projects ORDER BY title,id"))
-        for project in projects:
-            items = [t for t in rows if t.get("project_id") == project["id"]]
-            if items or project["status"] == "active":
-                lines.append(f"• {label(project['title'])}: {done_count(items)}/{len(items)} · {hours(minutes(items))}")
-        if not projects:
-            lines.append("• Нет проектов")
+        lines = ["<b>🏆 Итоги месяца</b>", f"<i>{REPORT_MONTHS[start.month-1]} {start.year}</i>",
+                 "", SEPARATOR, *summary_lines(rows)]
+        section(lines, "📂 Работа по проектам")
+        projects = list(conn.execute("SELECT id,title,status,area_id FROM projects ORDER BY title,id"))
+        linked = {}
+        for row in conn.execute("SELECT project_id,area_id FROM project_areas ORDER BY project_id,area_id"):
+            linked.setdefault(row["project_id"], []).append(row["area_id"])
+        groups = [(project_name(p,areas,linked), [t for t in rows if t.get("project_id") == p["id"]])
+                  for p in projects if p["status"] == "active" or any(t.get("project_id") == p["id"] for t in rows)]
+        without = [t for t in rows if t.get("project_id") is None]
+        if without:
+            groups.append(("📁 Без проекта",without))
+        if not groups:
+            lines.append("Нет проектов с задачами и активных проектов")
+        for name, items in groups:
+            done = done_count(items)
+            lines += [f"<b>{name}</b>", f"{done} из {len(items)} задач · {hours(minutes(items))} · {percent(done,len(items))}",
+                      bar(done,len(items)), ""]
+        if groups:
+            lines.pop()
+        section(lines, "🎯 Состояние целей")
         goals = list(conn.execute("SELECT * FROM goals ORDER BY title,id"))
         achieved = [g for g in goals if goal_achieved(g)]
         overdue = [g for g in goals if not goal_achieved(g) and g.get("period_end") and g["period_end"] < day]
-        lines += ["", "Цели — состояние на дату отчёта:", f"• Достигнуто: {len(achieved)}",
-                  f"• Не достигнуто: {len(goals)-len(achieved)}, из них просрочено: {len(overdue)}"]
-        lines += [f"  — {label(g['title'])}" for g in overdue]
-        lines += ["", "Запланированное время по направлениям:", *area_lines(rows,areas),
-                  "", "Изменение к предыдущему месяцу:", *delta_lines(rows,previous)]
+        lines += [f"✅ Достигнуто: <b>{len(achieved)}</b>",
+                  f"🟡 Не достигнуто, срок не истёк или не задан: <b>{len(goals)-len(achieved)-len(overdue)}</b>",
+                  f"🔴 Просрочено: <b>{len(overdue)}</b>"]
+        if overdue:
+            lines += ["", "<b>🔴 Просроченные цели</b>"]
+            lines += [f"• {escape(label(g['title']),quote=False)}" for g in overdue]
+        section(lines, "🧭 Баланс направлений")
+        lines += area_lines(rows,areas)
+        section(lines, f"📈 К предыдущему месяцу · {REPORT_MONTHS[previous_start.month-1].lower()}")
+        lines += delta_lines(rows,previous)
+        section(lines, "🔄 Изменение нагрузки")
         a,b = area_minutes(rows),area_minutes(previous)
-        lines.extend(f"• {label(areas.get(k,'Без направления'))}: {(a[k]-b[k])/60:+.1f} ч"
-                     for k in sorted(a.keys()|b.keys(), key=lambda k: (str(areas.get(k,'')),str(k))))
-        lines += ["", "По текущим записям календаря. Цели — текущий снимок, не история достижений. Часы плановые, не фактические.", URL]
+        keys = sorted(a.keys()|b.keys(), key=lambda k: (str(areas.get(k,{}).get("title","Без направления")),str(k)))
+        lines += [f"{area_name(areas,k)}: <b>{signed_hours(a[k]-b[k])}</b>" for k in keys] or ["Нет запланированного времени"]
+        lines += ["", "<i>По текущим записям календаря. Цели — состояние на дату отчёта, не история достижений. Часы плановые, не фактические.</i>"]
         return "monthly:"+start.isoformat(), "\n".join(lines)
     raise ValueError("unknown report mode")
 
-def transmit(text, *, formatted=False, calendar_button=False):
+def transmit(text, *, formatted=False, calendar_button=False, button_text="📅 Открыть календарь"):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
@@ -248,7 +309,7 @@ def transmit(text, *, formatted=False, calendar_button=False):
     if formatted:
         payload["parse_mode"] = "HTML"
     if calendar_button:
-        payload["reply_markup"] = {"inline_keyboard":[[{"text":"📅 Открыть календарь","url":URL}]]}
+        payload["reply_markup"] = {"inline_keyboard":[[{"text":button_text,"url":URL}]]}
     data = json.dumps(payload).encode()
     req = urllib.request.Request("https://api.telegram.org/bot"+token+"/sendMessage",
                                  data=data,headers={"Content-Type":"application/json"},method="POST")
@@ -291,15 +352,14 @@ def process(mode, now, dry_run):
     with connection() as conn:
         key,message = report(conn,mode,now)
         if dry_run:
-            return morning_pages(message) if mode == "morning" else chunks(message)
+            return morning_pages(message)
         # Independent lock: never hold the application's write lock over network I/O.
         conn.execute("SELECT pg_advisory_xact_lock(1648246156)")
         if conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(key,)).fetchone():
             return []
         # Freeze the text, its format and page boundaries before first send.
         # Old plain-text outbox entries remain valid across this deployment.
-        if mode == "morning":
-            message = json.dumps({"format":MORNING_FORMAT,"pages":morning_pages(message)},ensure_ascii=False)
+        message = json.dumps({"format":REPORT_FORMATS[mode],"pages":morning_pages(message)},ensure_ascii=False)
         conn.execute("""INSERT INTO telegram_report_outbox(message_key,message) VALUES (%s,%s)
                         ON CONFLICT DO NOTHING""",(key,message))
         message = conn.execute("SELECT message FROM telegram_report_outbox WHERE message_key=%s",(key,)).fetchone()["message"]
@@ -311,10 +371,10 @@ def process(mode, now, dry_run):
             return []
         formatted = False
         pages = None
-        if mode == "morning" and message.startswith("{"):
+        if message.startswith("{"):
             try:
                 saved = json.loads(message)
-                if saved.get("format") == MORNING_FORMAT:
+                if saved.get("format") == REPORT_FORMATS[mode]:
                     pages = saved["pages"]
                     formatted = True
             except (ValueError, AttributeError, KeyError):
@@ -326,7 +386,10 @@ def process(mode, now, dry_run):
             if conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(identity,)).fetchone():
                 continue
             if formatted:
-                transmit(text,formatted=True,calendar_button=index==len(pages)-1)
+                options = {"formatted":True,"calendar_button":index==len(pages)-1}
+                if mode != "morning":
+                    options["button_text"] = "📊 Открыть PersonalManagement" if mode == "monthly" else "📅 Открыть PersonalManagement"
+                transmit(text,**options)
             else:
                 transmit(text)
             conn.execute("INSERT INTO telegram_sent(message_key) VALUES (%s) ON CONFLICT DO NOTHING",(identity,))
