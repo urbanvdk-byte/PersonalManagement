@@ -58,8 +58,12 @@ self.addEventListener('push',event=>{
  let data;
  try{data=event.data.json()}catch{return}
  if(typeof data.title!=='string'||typeof data.body!=='string')return;
+ // Notification title/body are native plain text. Use the large icon for
+ // a color-coded priority circle; retain the textual P-number for accessibility.
+ const priority=Number.isInteger(data.priority)&&data.priority>=1&&data.priority<=4?data.priority:null;
+ const iconPath=priority===null?'brand-icon-v2-192.png':`push-priority-${priority}.png`;
  event.waitUntil(self.registration.showNotification(data.title,{
-   body:data.body,icon:new URL('brand-icon-v2-192.png',root).toString(),
+   body:data.body,icon:new URL(iconPath,root).toString(),
    tag:String(data.tag||'pm-task'),renotify:false,
    data:{url:typeof data.url==='string'?data.url:root.href}
  }));

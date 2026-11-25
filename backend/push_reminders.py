@@ -96,7 +96,8 @@ def due_tasks(tasks,exceptions,now):
 def send(subscription,task,key):
     when=task["scheduled_at"]
     identity=f"{task['id']}:{when}"
-    body={"title":"Задача через час","body":f"{when[11:16]} · P{task['priority']} · {task['title']}",
+    body={"title":task["title"],"body":f"{when[11:16]} · P{task['priority']}",
+          "priority":task["priority"],
           "tag":identity,"url":"/?"+urlencode({"task":task["id"],"day":when[:10]})}
     deliver(subscription,body,key)
 

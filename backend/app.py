@@ -378,6 +378,8 @@ PUBLIC_BRANDING_PATHS = frozenset({
     "/manifest.webmanifest", "/manifest-v2.webmanifest",
     "/favicon-32.png", "/brand-icon-192.png",
     "/favicon-v2-32.png", "/brand-icon-v2-192.png", "/brand-icon-v2-512.png",
+    "/push-priority-1.png", "/push-priority-2.png",
+    "/push-priority-3.png", "/push-priority-4.png",
 })
 
 
@@ -1048,7 +1050,7 @@ def test_push_delivery(payload:dict[str,Any]):
         subscription=validate_subscription(json.loads(row["subscription"]))
         key=private_key(conn)
     try:
-        deliver(subscription,{"title":"Проверка напоминаний","body":"PersonalManagement: тестовое уведомление","tag":"pm-test","url":"/"},key)
+        deliver(subscription,{"title":"Тестовое напоминание","body":"P1 · Проверка оформления","priority":1,"tag":"pm-test","url":"/"},key)
     except WebPushException as exc:
         code=exc.response.status_code if exc.response is not None else None
         if code in (404,410):

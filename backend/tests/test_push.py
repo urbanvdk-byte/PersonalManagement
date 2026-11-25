@@ -93,3 +93,16 @@ def test_real_vapid_signature_and_transport(monkeypatch):
         assert Vapid02.verify(auth)
         assert auth.endswith("k="+public)
         assert request.headers["Content-Encoding"]=="aes128gcm"
+
+
+@pytest.mark.parametrize("priority",[1,2,3,4])
+def test_reminder_title_and_priority(monkeypatch,priority):
+    from push_reminders import send
+    captured=[]
+    monkeypatch.setattr("push_reminders.deliver",lambda sub,body,key:captured.append(body))
+    task={"id":42,"title":"Переработать видео с Феликсом","priority":priority,
+          "scheduled_at":"2026-11-25T15:30"}
+    send({},task,"unused")
+    assert captured==[{"title":task["title"],"body":f"15:30 · P{priority}",
+                       "priority":priority,"tag":"42:2026-11-25T15:30",
+                       "url":"/?task=42&day=2026-11-25"}]
