@@ -156,7 +156,7 @@ test('checklist survives offline creation, ID remapping and edits in an open tas
   await expect(checklist.getByRole('checkbox',{name:text,exact:true})).toBeVisible();
  };
  await add(item);
- await checklist.getByRole('checkbox',{name:item,exact:true}).check();
+ await checklist.getByRole('checkbox',{name:item,exact:true}).click();
  await expect(checklist.getByRole('checkbox',{name:item,exact:true})).toBeChecked();
  await add(second);
  await checklist.getByRole('button',{name:'Удалить пункт '+second}).click();
@@ -166,7 +166,7 @@ test('checklist survives offline creation, ID remapping and edits in an open tas
  await expect(drawer).toBeVisible();
  await expect(checklist.getByRole('checkbox',{name:item,exact:true})).toBeChecked();
  await add(second);
- await checklist.getByRole('checkbox',{name:item,exact:true}).uncheck();
+ await checklist.getByRole('checkbox',{name:item,exact:true}).click();
  await expect(checklist.getByRole('checkbox',{name:item,exact:true})).not.toBeChecked();
  await expect(page.getByText('Данные синхронизированы')).toBeVisible({timeout:30_000});
  const remote=await page.evaluate(async()=>await (await fetch('/api/bootstrap',{cache:'no-store'})).json());
