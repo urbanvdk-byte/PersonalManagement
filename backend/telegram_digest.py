@@ -8,6 +8,7 @@ import os
 import urllib.request
 from collections import Counter
 from datetime import date, datetime, timedelta
+from html import escape
 from threading import Event
 from zoneinfo import ZoneInfo
 
@@ -17,6 +18,10 @@ LOG = logging.getLogger("pm.telegram")
 MODES = ("morning", "weekly", "monthly")
 URL = "https://persmanag.bothost.tech/"
 DAY = timedelta(days=1)
+PRIORITY_EMOJI = {1:"🔴",2:"🟠",3:"🔵",4:"⚪"}
+WEEKDAYS = ("Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье")
+MONTHS = ("января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря")
+MORNING_FORMAT = "pm-morning-html-v1"
 
 def open_status(task):
     return task["status"] not in ("done", "cancelled")
@@ -104,29 +109,73 @@ def goal_achieved(goal):
     start, target, current = goal["start_value"], goal["target_value"], goal["current_value"]
     return bool(goal.get("done")) or (current >= target if target >= start else current <= target)
 
+def morning_report(conn, today, scheduled, backlog, overdue):
+    # Tasks have no separate emoji field: use their assigned direction, then
+    # their goal's direction, then the linked project's directions.
+    areas = {r["id"]: (r["emoji"] or "").strip() or "📁"
+             for r in conn.execute("SELECT id,emoji FROM areas")}
+    projects = {r["id"]: [r["area_id"]] if r["area_id"] is not None else []
+                for r in conn.execute("SELECT id,area_id FROM projects")}
+    linked = {}
+    for row in conn.execute("SELECT project_id,area_id FROM project_areas ORDER BY project_id,area_id"):
+        linked.setdefault(row["project_id"], []).append(row["area_id"])
+    projects.update(linked)
+    goals = {r["id"]: r for r in conn.execute("SELECT id,area_id,project_id FROM goals")}
+
+    def task_emoji(task):
+        goal = goals.get(task.get("goal_id"), {})
+        if task.get("area_id") in areas:
+            ids = [task["area_id"]]
+        elif goal.get("area_id") in areas:
+            ids = [goal["area_id"]]
+        else:
+            ids = projects.get(task.get("project_id") or goal.get("project_id"), [])
+        # Limit the cluster to four distinct direction icons to stay compact.
+        emojis = list(dict.fromkeys(areas[i] for i in ids if i in areas))[:4]
+        return escape(" ".join(emojis) or "📁", quote=False)
+
+    load = minutes(scheduled)
+    counts = Counter(t["priority"] for t in scheduled)
+    separator = "────────────"
+    lines = ["<b>☀️ План дня</b>",
+             f"<i>{WEEKDAYS[today.weekday()]}, {today.day} {MONTHS[today.month-1]} {today.year}</i>",
+             "", f"<b>📋 {len(scheduled)} задач · {hours(load)}</b>"]
+    if load > 480:
+        lines.append("⚠️ Высокая нагрузка")
+    lines += ["", "   ".join(f"{PRIORITY_EMOJI[p]} P{p}: <b>{counts[p]}</b>" for p in range(1,5))]
+    groups = [
+        ("🌤 УТРО", [t for t in scheduled if int(t["scheduled_at"][11:13]) < 13]),
+        ("☀️ ДЕНЬ", [t for t in scheduled if 13 <= int(t["scheduled_at"][11:13]) < 18]),
+        ("🌙 ВЕЧЕР", [t for t in scheduled if int(t["scheduled_at"][11:13]) >= 18]),
+    ]
+    for heading, tasks in groups:
+        if not tasks:
+            continue
+        lines += ["", separator, f"<b>{heading}</b>", ""]
+        for task in tasks:
+            priority = task["priority"]
+            title = escape(label(task["title"]), quote=False)
+            lines += [f"<b>{task['scheduled_at'][11:16]}</b> · {PRIORITY_EMOJI[priority]} P{priority}",
+                      f"{task_emoji(task)} {title}", ""]
+        lines.pop()
+    if not scheduled:
+        lines += ["", separator, "🌿 Свободный день"]
+    lines += ["", separator, "<b>📊 Остальные задачи</b>", "",
+              f"⏰ Просрочено: <b>{len(overdue)}</b>" if overdue else "✅ Просроченных нет",
+              f"📥 Без времени: <b>{len(backlog)}</b>",
+              f"🔴 Из них P1: <b>{sum(t['priority']==1 for t in backlog)}</b>"]
+    return "\n".join(lines)
+
 def report(conn, mode, now):
     today = now.date()
     tasks, exceptions = load_tasks(conn)
     day = today.isoformat()
     if mode == "morning":
         scheduled = [t for t in period_rows(tasks, exceptions, today, today) if open_status(t)]
-        important = sorted(scheduled, key=lambda t: (t["priority"], t["scheduled_at"]))[:3]
         backlog = [t for t in tasks if open_status(t) and not t.get("scheduled_at")]
         overdue = [t for t in tasks if open_status(t) and t.get("due_at")
                    and datetime.fromisoformat(t["due_at"]).replace(tzinfo=None) < now.replace(tzinfo=None)]
-        load = minutes(scheduled)
-        lines = ["☀️ План на " + now.strftime("%d.%m.%Y"),
-                 f"Запланировано: {len(scheduled)} задач · {hours(load)}" + (" ⚠️ Перегрузка" if load > 480 else ""),
-                 "", "Главные задачи:"]
-        lines.extend(f"• P{t['priority']} {t['scheduled_at'][11:16]} {label(t['title'])}" for t in important)
-        if not important:
-            lines.append("• Запланированных задач нет")
-        lines += ["", "Расписание:"]
-        lines.extend(f"• {t['scheduled_at'][11:16]} · P{t['priority']} · {label(t['title'])}" for t in scheduled)
-        if not scheduled:
-            lines.append("• Свободный день")
-        lines += ["", f"Просрочено: {len(overdue)}", f"Без времени: {len(backlog)}, из них P1: {sum(t['priority']==1 for t in backlog)}", URL]
-        return "morning:" + day, "\n".join(lines)
+        return "morning:" + day, morning_report(conn, today, scheduled, backlog, overdue)
     areas = {r["id"]: r["title"] for r in conn.execute("SELECT id,title FROM areas")}
     if mode == "weekly":
         start = today - timedelta(days=today.weekday())
@@ -185,12 +234,17 @@ def report(conn, mode, now):
         return "monthly:"+start.isoformat(), "\n".join(lines)
     raise ValueError("unknown report mode")
 
-def transmit(text):
+def transmit(text, *, formatted=False, calendar_button=False):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
         raise RuntimeError("Telegram credentials are missing")
-    data = json.dumps({"chat_id":chat,"text":text,"disable_web_page_preview":True}).encode()
+    payload = {"chat_id":chat,"text":text,"disable_web_page_preview":True}
+    if formatted:
+        payload["parse_mode"] = "HTML"
+    if calendar_button:
+        payload["reply_markup"] = {"inline_keyboard":[[{"text":"📅 Открыть календарь","url":URL}]]}
+    data = json.dumps(payload).encode()
     req = urllib.request.Request("https://api.telegram.org/bot"+token+"/sendMessage",
                                  data=data,headers={"Content-Type":"application/json"},method="POST")
     with urllib.request.urlopen(req,timeout=12) as response:
@@ -222,7 +276,10 @@ def process(mode, now, dry_run):
         conn.execute("SELECT pg_advisory_xact_lock(1648246156)")
         if conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(key,)).fetchone():
             return []
-        # Freeze the text before first send so retries cannot shift page boundaries.
+        # Freeze the text, its format and page boundaries before first send.
+        # Old plain-text outbox entries remain valid across this deployment.
+        if mode == "morning":
+            message = json.dumps({"format":MORNING_FORMAT,"pages":chunks(message)},ensure_ascii=False)
         conn.execute("""INSERT INTO telegram_report_outbox(message_key,message) VALUES (%s,%s)
                         ON CONFLICT DO NOTHING""",(key,message))
         message = conn.execute("SELECT message FROM telegram_report_outbox WHERE message_key=%s",(key,)).fetchone()["message"]
@@ -232,11 +289,26 @@ def process(mode, now, dry_run):
         conn.execute("SELECT pg_advisory_xact_lock(1648246156)")
         if conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(key,)).fetchone():
             return []
-        for index,text in enumerate(chunks(message)):
+        formatted = False
+        pages = None
+        if mode == "morning" and message.startswith("{"):
+            try:
+                saved = json.loads(message)
+                if saved.get("format") == MORNING_FORMAT:
+                    pages = saved["pages"]
+                    formatted = True
+            except (ValueError, AttributeError, KeyError):
+                pass
+        if pages is None:
+            pages = chunks(message)
+        for index,text in enumerate(pages):
             identity = f"{key}:part:{index}"
             if conn.execute("SELECT 1 FROM telegram_sent WHERE message_key=%s",(identity,)).fetchone():
                 continue
-            transmit(text)
+            if formatted:
+                transmit(text,formatted=True,calendar_button=index==len(pages)-1)
+            else:
+                transmit(text)
             conn.execute("INSERT INTO telegram_sent(message_key) VALUES (%s) ON CONFLICT DO NOTHING",(identity,))
             # Preserve successful individual pages across errors; reacquire next iteration.
             conn.commit()
