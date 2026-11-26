@@ -473,3 +473,13 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
 .task-completion-control small{display:block;font-size:11px;line-height:1.4;font-weight:400;color:#777b74;margin-top:4px}
 
 .goal-contribution-overlay{position:fixed;inset:0;z-index:3000;background:rgba(34,40,35,.44);display:grid;place-items:center;padding:16px}.goal-contribution-dialog{background:#fff;color:#363b36;width:min(100%,440px);max-height:90dvh;overflow:auto;border-radius:18px;padding:22px;box-shadow:0 16px 60px #0003;display:flex;flex-direction:column;gap:14px}.goal-contribution-dialog h2{font-size:20px;line-height:1.35;margin:0}.goal-contribution-dialog p{margin:0;font-size:14px;color:#666}.goal-contribution-dialog label{display:flex;flex-direction:column;gap:8px;font-size:13px;font-weight:600}.goal-contribution-dialog input[type=range]{width:100%;accent-color:#ed8a37}.goal-contribution-dialog input[type=number]{width:100%;box-sizing:border-box;font-size:16px;padding:10px;border:1px solid #dcded9;border-radius:8px}.goal-contribution-dialog small{color:#747a72;font-size:12px;line-height:1.4}.goal-contribution-actions{display:flex;gap:10px}.goal-contribution-actions button{flex:1;justify-content:center}
+
+/* Explicit task–goal relationship; task completion is separate from goal progress. */
+.task-goal-link{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid #e9d3be;border-radius:12px;background:#fffaf4}
+.task-goal-link>strong,.goal-linked-header>strong{display:flex;align-items:center;gap:7px;font-size:13px;color:#383b37}
+.task-goal-link>small,.goal-linked-header>small{font-size:11px;color:#777b73;line-height:1.45}
+.goal-card-group{min-width:0;display:flex;flex-direction:column;gap:8px;align-self:start}
+.goal-card-group>.goal-card{width:100%;min-width:0}
+.goal-linked-tasks{min-width:0;background:#fff;border:1px solid #ece7df;border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.goal-linked-header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.goal-add-task{width:100%;justify-content:center}
