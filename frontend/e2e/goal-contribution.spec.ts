@@ -25,7 +25,16 @@ test('mobile day: completing, reopening and recompleting a recurring task change
   for(let i=0;i<2;i++){
    await complete.click();
    await expect(dialog).toBeVisible();
-   await dialog.getByRole('spinbutton',{name:'Величина вклада'}).fill('1');
+   const input=dialog.getByRole('spinbutton',{name:'Величина вклада'});
+   const slider=dialog.getByRole('slider',{name:'Ползунок вклада'});
+   await expect(input).toHaveAttribute('step','1');
+   await expect(slider).toHaveAttribute('step','1');
+   await input.fill('1.25');
+   await expect(dialog.getByRole('button',{name:'ДА',exact:true})).toBeDisabled();
+   await input.fill('0');
+   await slider.focus();
+   await slider.press('ArrowRight');
+   await expect(input).toHaveValue('1');
    await dialog.getByRole('button',{name:'ДА',exact:true}).click();
    await expect.poll(value).toBe(25);
    await expect(reopen).toBeVisible();
@@ -40,3 +49,31 @@ test('mobile day: completing, reopening and recompleting a recurring task change
   expect(entries[0].delta).toBe(1);
  }finally{await context.close();}
 });
+
+for(const measurable of [0,1]){
+ test('integer contribution can finish a legacy fractional remainder, measurable='+measurable,async({page})=>{
+  const storage='personalmanagement:pages-demo:v1';
+  await page.goto('/');
+  await page.evaluate(({key,measurable})=>{
+   const data=JSON.parse(localStorage.getItem(key)!);
+   const goal=data.goals.find((g:any)=>g.id===2);
+   Object.assign(goal,{start_value:0,target_value:100,current_value:99.25,measurable,done:0,unit:'шт.'});
+   localStorage.setItem(key,JSON.stringify(data));
+  },{key:storage,measurable});
+  await page.reload();
+  await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+  await page.getByRole('button',{name:'Выполнить: Обсудить план проекта',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Вклад в цель'});
+  const slider=dialog.getByRole('slider');
+  const input=dialog.getByRole('spinbutton');
+  await expect(slider).toHaveAttribute('max','1');
+  await input.fill('1');
+  await expect(dialog.getByText(measurable?'После выполнения: 100%':'После выполнения: 100 шт.',{exact:true})).toBeVisible();
+  if(measurable)await expect(dialog.getByText('Текущий показатель: 99 / 100 шт.',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'ДА',exact:true}).click();
+  const value=()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)!).goals.find((g:any)=>g.id===2).current_value,storage);
+  await expect.poll(value).toBe(100);
+  await page.getByRole('button',{name:'Отменить выполнение: Обсудить план проекта',exact:true}).click();
+  await expect.poll(value).toBe(99.25);
+ });
+}
