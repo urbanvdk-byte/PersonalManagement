@@ -476,7 +476,8 @@ body{background:var(--pm-ground);color:var(--pm-ink)}
 
 /* Holidays are all-day calendar entries, not timed tasks. */
 .allday-cell .holiday-calendar-item{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;line-height:1.35;font-size:11px;font-weight:600;padding:5px 6px;text-align:left;min-width:0;background:#fff0df;color:#77491e}
-.schedule-holidays{display:flex;flex-direction:column;gap:7px;margin:0 0 18px;padding:12px 14px;border-radius:15px;background:#f9f8f5}
-.schedule-holidays h3{margin:0;font-size:14px;color:#353734}
-.schedule-holidays button{border:0;background:#fff0df;color:#77491e;text-align:left;border-radius:8px;padding:9px 10px;font-size:13px;overflow-wrap:anywhere}
+.schedule-summary>.schedule-holidays{min-width:0;justify-content:flex-start}
+.schedule-holidays button{border:0;background:transparent;color:#353734;text-align:left;padding:0;font-size:13px;font-weight:600;line-height:1.4;white-space:normal;overflow-wrap:anywhere;min-width:0}
+.schedule-holidays button:hover{text-decoration:underline}
+@media(max-width:760px){.schedule-holidays button{font-size:11px}}
 .holiday-toggle span{display:flex;align-items:center;gap:8px}

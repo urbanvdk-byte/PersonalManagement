@@ -16,6 +16,11 @@ test('holiday has date and category, appears only in all-day row and daily holid
  await dialog.getByRole('button',{name:'Сохранить'}).click();
  const holiday=page.locator('.schedule-holidays').getByRole('button',{name:'🎂🏃 День рождения Баева',exact:true});
  await expect(holiday).toBeVisible();
+ await expect(page.locator('.schedule-summary > .schedule-holidays')).toHaveCount(1);
+ await expect(page.locator('.schedule-holidays')).toHaveCount(1);
+ await expect(page.locator('.schedule-holidays strong')).toHaveCount(0);
+ await expect(page.locator('.schedule-summary > div')).toHaveCount(3);
+ await expect(page.locator('.schedule-page').getByText('Праздники',{exact:true})).toHaveCount(1);
  await expect(page.locator('.schedule-timeline').getByText('День рождения Баева')).toHaveCount(0);
  await expect(page.locator('.schedule-summary').getByText('Запланировано')).toHaveCount(0);
  await page.locator('.nav-item',{hasText:'Календарь'}).click();

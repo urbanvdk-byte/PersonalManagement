@@ -80,11 +80,10 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
      })}
    </div>
    <div className="schedule-summary">
-     <div><span>Праздники</span><strong>{holidays.length}</strong></div>
+     <div className="schedule-holidays" aria-label="Праздники"><span>Праздники</span>{holidays.length?holidays.map(t=><button key={t.id} type="button" onClick={()=>onEdit({kind:'tasks',record:t})}>{holidayLabel(t,store)}</button>):<small>Нет праздников</small>}</div>
      <div><span>Загрузка</span><strong>{asDuration(dayLoad)}</strong></div>
      <div><span>Задачи</span><strong>{tasks.length-done} <em>/ {tasks.length}</em></strong></div>
    </div>
-   {holidays.length>0&&<section className="schedule-holidays" aria-label="Праздники"><h3>Праздники</h3>{holidays.map(t=><button key={t.id} type="button" onClick={()=>onEdit({kind:'tasks',record:t})}>{holidayLabel(t,store)}</button>)}</section>}
     <div className="schedule-timeline-head"><h3>План по времени</h3><span><Clock3 size={14}/> {day===today?'Сегодня':'Выбранный день'}</span></div>
    <div className="schedule-timeline">
     {entries.length===0?
