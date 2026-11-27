@@ -68,7 +68,7 @@ for(const measurable of [0,1]){
   const input=dialog.getByRole('spinbutton');
   await expect(slider).toHaveAttribute('max','1');
   await input.fill('1');
-  await expect(dialog.getByText(measurable?'После выполнения: 100%':'После выполнения: 100 шт.',{exact:true})).toBeVisible();
+  await expect(dialog.getByText(measurable?'После выполнения: 100 шт.':'После выполнения: 100%',{exact:true})).toBeVisible();
   if(measurable)await expect(dialog.getByText('Текущий показатель: 99 / 100 шт.',{exact:true})).toBeVisible();
   await dialog.getByRole('button',{name:'ДА',exact:true}).click();
   const value=()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)!).goals.find((g:any)=>g.id===2).current_value,storage);
