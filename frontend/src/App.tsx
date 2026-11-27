@@ -10,6 +10,7 @@ import CalendarBacklog from './CalendarBacklog';
 import TaskChecklist from './TaskChecklist';
 import PushSettings from './PushSettings';
 import GoalContribution from './GoalContribution';
+import {HOLIDAY_TYPES,isHoliday,isHolidayType,validHolidayDate} from './holidays';
 import {ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
@@ -28,7 +29,7 @@ const pages:{id:Page;title:string;icon:typeof CalendarDays}[]=[
 ];
 const projectStatuses:Record<string,string>={active:'Активен',paused:'Пауза',done:'Завершён',archived:'Архив'};
 const labels:Record<Kind,string>={areas:'направление',projects:'проект',goals:'цель',tasks:'задачу'};
-const isOpen=(t:Task)=>!['done','cancelled'].includes(t.status);
+const isOpen=(t:Task)=>!isHoliday(t)&&!['done','cancelled'].includes(t.status);
 const isIncoming=(t:Task)=>isOpen(t)&&!t.scheduled_at;
 const groupName=(id:number|null,items:{id:number;title:string}[])=>items.find(x=>x.id===id)?.title||'Без привязки';
 function percent(goal:Goal){if(goal.done)return 100;const range=goal.target_value-goal.start_value;return range===0?(goal.current_value>=goal.target_value?100:0):Math.max(0,Math.min(100,Math.round(100*(goal.current_value-goal.start_value)/range)))}
@@ -58,12 +59,13 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
  const instance=kind==='tasks'&&(record as Task|undefined)?.occurrence_date?record as Task:null;
  const [scope,setScope]=useState<Scope>(instance?'one':'all');
- const scheduleRequired=kind==='tasks'&&Boolean(editing.requireSchedule||form.recurrence);
+ const holiday=kind==='tasks'&&isHolidayType(form.holiday_type);
+ const scheduleRequired=kind==='tasks'&&!holiday&&Boolean(editing.requireSchedule||form.recurrence);
  const hasTimeInput=kind==='tasks'&&form.scheduled_at!==null&&form.scheduled_at!==undefined&&form.scheduled_at!=='';
- const missingTaskTime=kind==='tasks'&&(scheduleRequired||hasTimeInput)&&!hasScheduledTime(form.scheduled_at);
- const invalidTaskDuration=kind==='tasks'&&!isValidTaskDuration(form.duration_minutes??60);
+ const missingTaskTime=kind==='tasks'&&!holiday&&(scheduleRequired||hasTimeInput)&&!hasScheduledTime(form.scheduled_at);
+ const invalidTaskDuration=kind==='tasks'&&!holiday&&!isValidTaskDuration(form.duration_minutes??60);
  const missingTitle=!String(form.title??'').trim();
- const preventSave=missingTitle||missingTaskTime||invalidTaskDuration;
+ const preventSave=missingTitle||missingTaskTime||invalidTaskDuration||(holiday&&!validHolidayDate(form.holiday_date));
  const set=(key:string,value:unknown)=>setForm(v=>{
    const next={...v,[key]:value};
    if(key==='project_id'&&(kind==='tasks'||kind==='goals')){
@@ -108,7 +110,10 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   setBusy(true);setError('');
   const payload={...form};delete payload.id;delete payload.created_at;delete payload.updated_at;delete payload.occurrence_date;delete payload.revision;
   if(kind==='goals'&&payload.measurable===0){delete payload.start_value;delete payload.target_value;delete payload.current_value;delete payload.unit;}
-  if(kind==='tasks'){
+  if(kind==='tasks'&&holiday){
+    Object.assign(payload,{status:'planned',scheduled_at:null,due_at:null,project_id:null,goal_id:null,parent_id:null,recurrence:'',recurrence_until:null,priority:4,important:0,urgent:0,duration_minutes:60,color:DEFAULT_TASK_COLOR});
+  }else if(kind==='tasks'){
+    if(!record){delete payload.holiday_date;delete payload.holiday_type;}
     // Completion is controlled only by the task checkmark. Scheduling determines the active state.
     if(!instance&&payload.status!=='done'&&payload.status!=='cancelled')payload.status=payload.scheduled_at?'planned':'inbox';
     if(instance&&(scope!=='one'||payload.status===instance.status))delete payload.status;
@@ -141,7 +146,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
   <div className="drawer-head"><div><small>{record?'РЕДАКТИРОВАНИЕ':'НОВАЯ ЗАПИСЬ'}</small><h2>{record?'Изменить':'Добавить'} {labels[kind]}</h2></div><button className="icon-btn" onClick={close} aria-label="Закрыть"><X size={20}/></button></div>
   <form onSubmit={submit} className="drawer-form">
    {field('title','Название *','Название задачи или результата')}
-   {kind==='tasks'&&record&&form.status!=='cancelled'&&(!instance||scope==='one')&&
+   {kind==='tasks'&&!holiday&&record&&form.status!=='cancelled'&&(!instance||scope==='one')&&
      <label className="task-completion-control"><input type="checkbox" checked={form.status==='done'}
        onChange={e=>set('status',e.target.checked?'done':form.scheduled_at?'planned':'inbox')}/>
        <span>Задача выполнена<small>{form.status==='done'?'Снимите галочку и сохраните, чтобы вернуть задачу в работу.':'Поставьте галочку и сохраните, чтобы завершить задачу.'}</small></span>
@@ -154,8 +159,9 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
      </div>
      {field('emoji','Или вставьте свой emoji','Например, 🌞')}
    </>}
-   {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'?'notes':'description',e.target.value)}/></label>}
-   {kind!=='areas'&&kind!=='projects'&&<div className="two">{refs('area_id','Направление',store.areas)}{refs('project_id','Проект',store.projects)}</div>}
+   {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'&&!holiday?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'?'notes':'description',e.target.value)}/></label>}
+   {holiday&&<>{refs('area_id','Направление',store.areas)}{choices('holiday_type','Категория праздника',HOLIDAY_TYPES)}<label className="form-field"><span>Дата праздника *</span><input type="date" required value={String(form.holiday_date??'')} onChange={e=>set('holiday_date',e.target.value)}/></label></>}
+    {!holiday&&kind!=='areas'&&kind!=='projects'&&<div className="two">{refs('area_id','Направление',store.areas)}{refs('project_id','Проект',store.projects)}</div>}
    {kind==='projects'&&<>
      <div className="form-field"><span>Направления проекта (можно несколько)</span>
        <div className="project-areas-picker">
@@ -177,7 +183,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     <label className="form-field"><span><input type="checkbox" checked={form.measurable!==0} onChange={e=>set('measurable',e.target.checked?1:0)}/> Количественные показатели</span></label>
     {form.measurable!==0&&<><div className="two">{number('start_value','Исходное')}{number('target_value','Цель',1)}</div><div className="two">{number('current_value','Достигнуто')}{field('unit','Единица','шт., км, ₽')}</div></>}
     <label className="form-field"><span><input type="checkbox" checked={Boolean(form.done)} onChange={e=>set('done',e.target.checked?1:0)}/> Цель достигнута</span></label></>}
-   {kind==='tasks'&&<>
+   {kind==='tasks'&&!holiday&&<>
     {refs('goal_id','Цель',store.goals.filter(g=>!form.project_id||g.project_id===form.project_id||g.id===form.goal_id))}
     <label className="form-field"><span>Приоритет</span><select value={Number(form.priority??4)} onChange={e=>set('priority',Number(e.target.value))}>
      <option value={1}>P1 — важно и срочно</option><option value={2}>P2 — важно</option><option value={3}>P3 — срочно</option><option value={4}>P4 — прочее</option>
@@ -212,9 +218,10 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
     </>}
     <p className="form-help">{editing.requireSchedule?'Для задачи из календаря укажите дату и время.':'Можно оставить время пустым: задача сохранится в списке и не появится в календаре.'} Повторяющиеся задачи всегда требуют даты. Крайний срок и запланированное время — разные поля.</p>
    </>}
-   {taskId!==null&&<TaskChecklist taskId={taskId} items={(store.checklist||[]).filter(item=>item.task_id===taskId)} reload={reload}/>}
+   {!holiday&&taskId!==null&&<TaskChecklist taskId={taskId} items={(store.checklist||[]).filter(item=>item.task_id===taskId)} reload={reload}/>}
+   {kind==='tasks'&&(!record||holiday)&&<label className="form-field holiday-toggle"><span><input type="checkbox" checked={holiday} disabled={Boolean(record)} onChange={e=>setForm(prev=>({...prev,holiday_type:e.target.checked?'birthday':null,holiday_date:prev.holiday_date||String(prev.scheduled_at??'').slice(0,10)||dayKey(new Date())}))}/> Праздник</span></label>}
    {error&&<p role="alert" className="error">{error}</p>}
-   <div className="form-actions">{kind==='tasks'&&record&&(record as Task).scheduled_at&&!(record as Task).recurrence&&
+   <div className="form-actions">{kind==='tasks'&&!holiday&&record&&(record as Task).scheduled_at&&!(record as Task).recurrence&&
      <button type="button" className="secondary-btn" disabled={busy} onClick={()=>void unschedule(record as Task).then(close).catch(err=>setError(String(err)))}>
        Убрать из календаря
      </button>}
@@ -471,7 +478,7 @@ export default function App(){
   const basic=kind==='tasks'?{priority:4,status:'inbox',duration_minutes:60,color:DEFAULT_TASK_COLOR,recurrence:'',recurrence_until:null}:
     kind==='projects'?{status:'active',area_ids:[]}:kind==='goals'?{start_value:0,target_value:1,current_value:0}:
     {emoji:'📁'};
-  setEditing({kind,defaults:{...basic,...defaults},requireSchedule:kind==='tasks'&&(page==='calendar'||page==='schedule')});
+  setEditing({kind,defaults:{...basic,...(kind==='tasks'?{holiday_date:String(defaults.scheduled_at??'').slice(0,10)||selectedDay}:{}),...defaults},requireSchedule:kind==='tasks'&&(page==='calendar'||page==='schedule')});
  };
  useEffect(()=>{
    if(loading)return;
@@ -490,13 +497,14 @@ export default function App(){
  },[loading,data]);
  const active=data.tasks.filter(isOpen);const overdue=active.filter(t=>t.due_at&&t.due_at.slice(0,10)<dayKey(new Date())).length;
  const selectedProject=data.projects.find(p=>p.id===selectedProjectId);
- const filtered=useMemo(()=>data.tasks.filter(t=>t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
+ const filtered=useMemo(()=>data.tasks.filter(t=>!isHoliday(t)&&t.title.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))),[data.tasks,search]);
  const title=pages.find(x=>x.id===page)?.title||'Календарь';
  const busyDays=useMemo(()=>{
    const days=new Set<string>();
    const first=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth(),1));
    const last=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth()+1,0));
    expandTasks(data.tasks.filter(isOpen),data.occurrences||[],first,last).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10))});
+   data.tasks.filter(t=>isHoliday(t)&&t.status!=='cancelled'&&t.holiday_date&&t.holiday_date>=first&&t.holiday_date<=last).forEach(t=>days.add(t.holiday_date!));
    return days;
  },[data,displayMonth]);
  function goToDay(key:string){

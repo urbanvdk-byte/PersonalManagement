@@ -161,7 +161,7 @@ FIELDS = {
     "areas": {"title", "color", "emoji"},
     "projects": {"area_id", "area_ids", "title", "description", "status", "start_date", "due_date"},
     "goals": {"area_id", "project_id", "title", "description", "period_start", "period_end", "start_value", "target_value", "current_value", "unit", "measurable", "done"},
-    "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "recurrence_until", "color"},
+    "tasks": {"area_id", "project_id", "goal_id", "parent_id", "title", "notes", "priority", "important", "urgent", "status", "scheduled_at", "due_at", "duration_minutes", "recurrence", "recurrence_until", "color", "holiday_type", "holiday_date"},
     "events": {"area_id", "project_id", "title", "notes", "starts_at", "ends_at", "color", "done"},
 }
 STATUS = {"inbox", "planned", "in_progress", "waiting", "done", "someday", "cancelled"}
@@ -172,7 +172,8 @@ OCCURRENCE_FIELDS = {"title", "notes", "priority", "important", "urgent", "statu
                      "project_id", "goal_id"}
 TASK_COLORS = {"#3466d9", "#16a2dc", "#12aaa1", "#39aa6f", "#e4b636", "#ff963b", "#e7635e", "#9463d6"}
 DATETIME_KEYS = {"scheduled_at", "due_at", "starts_at", "ends_at"}
-DATE_KEYS = {"start_date", "due_date", "period_start", "period_end", "recurrence_until"}
+DATE_KEYS = {"start_date", "due_date", "period_start", "period_end", "recurrence_until", "holiday_date"}
+HOLIDAY_TYPES = {"birthday", "public", "anniversary", "event", "other"}
 ID_KEYS = {"area_id", "project_id", "goal_id", "parent_id"}
 AUTH_MAX_FAILURES = 5
 AUTH_WINDOW_SECONDS = 900
@@ -235,6 +236,8 @@ def setup() -> None:
             ("areas", "emoji", "TEXT NOT NULL DEFAULT '📁'"),
             ("tasks", "color", "TEXT NOT NULL DEFAULT '#3466d9'"),
             ("tasks", "recurrence_until", "TEXT"),
+            ("tasks", "holiday_type", "TEXT"),
+            ("tasks", "holiday_date", "TEXT"),
             ("goals", "measurable", "INTEGER NOT NULL DEFAULT 1 CHECK(measurable IN (0,1))"),
             ("goals", "done", "INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1))"),
             ("events", "done", "INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1))"),
@@ -447,6 +450,9 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
         elif key in ("notes", "description"):
             if not isinstance(value, str) or len(value) > 20000:
                 raise HTTPException(422, f"Некорректное поле {key}")
+        elif key == "holiday_type":
+            if value is not None and (not isinstance(value,str) or value not in HOLIDAY_TYPES):
+                raise HTTPException(422,"Некорректная категория праздника")
         elif key == "recurrence":
             if not isinstance(value,str) or value not in RECURRENCES:
                 raise HTTPException(422, "Повторение: ежедневно, еженедельно, ежемесячно или ежегодно")
@@ -488,7 +494,9 @@ def validate(kind: str, payload: dict[str, Any], creating: bool = False) -> dict
                 try:
                     if not isinstance(value, str):
                         raise ValueError()
-                    date.fromisoformat(value)
+                    parsed=date.fromisoformat(value)
+                    if key=="holiday_date" and parsed.isoformat()!=value:
+                        raise ValueError()
                 except ValueError:
                     raise HTTPException(422, f"Некорректная дата {key}")
         elif key == "emoji":
@@ -527,6 +535,14 @@ def project_with_areas(conn:psycopg.Connection,row:dict):
 
 def validate_task_schedule(conn:psycopg.Connection,values:dict,prior:dict|None=None):
     combined={**(prior or {}),**values}
+    if prior is not None and bool(prior.get("holiday_type"))!=bool(combined.get("holiday_type")):
+        raise HTTPException(422,"Тип существующей записи нельзя изменить")
+    if combined.get("holiday_type"):
+        if not combined.get("holiday_date") or any(combined.get(k) is not None for k in ("scheduled_at","due_at","project_id","goal_id","parent_id","recurrence_until")) or combined.get("recurrence") or combined.get("status","inbox")!="planned":
+            raise HTTPException(422,"Некорректный праздник: укажите категорию и дату без времени")
+        return
+    if combined.get("holiday_date") is not None:
+        raise HTTPException(422,"Выберите категорию праздника")
     if combined.get("recurrence") and not combined.get("scheduled_at"):
         raise HTTPException(422,"Для повторяющейся задачи нужна дата и время")
 

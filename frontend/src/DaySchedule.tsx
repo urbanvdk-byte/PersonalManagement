@@ -2,6 +2,7 @@ import {useEffect,useMemo,useRef,useState,type CSSProperties} from 'react';
 import {AlarmClock,CalendarDays,Check,ChevronLeft,ChevronRight,Plus,Repeat2,Clock3} from 'lucide-react';
 import {addDays,dayKey,fmtDate,fmtTime,makeDay,weekStart} from './date';
 import {expandTasks} from './recurrence';
+import {holidaysOn,holidayLabel} from './holidays';
 import {areaEmoji,taskColor} from './taskPalette';
 import type {Editing,Store,Task} from './types';
 
@@ -33,6 +34,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
    }));
    return taskItems.sort((a,b)=>a.start-b.start||a.end-b.end);
  },[tasks]);
+ const holidays=holidaysOn(store,day);
  const dayLoad=entries.reduce((total,item)=>total+Math.max(0,item.end-item.start),0);
  const done=tasks.filter(t=>t.status==='done').length;
  const withinIndex=showNow?entries.findIndex(entry=>currentMinute>=entry.start&&currentMinute<entry.end):-1;
@@ -68,7 +70,7 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
        const key=dayKey(d);
        const active=key===day;
        const dayTasks=expandTasks(store.tasks,store.occurrences||[],key,key,true);
-       const count=dayTasks.length;
+       const count=dayTasks.length+holidaysOn(store,key).length;
        return <button key={key} className={'schedule-date '+(active?'active ':'')+(key===today?'is-today':'')}
          aria-pressed={active} aria-label={fmtDate(key,{weekday:'long',day:'numeric',month:'long'})}
          onClick={()=>onDayChange(key)}>
@@ -78,11 +80,12 @@ export default function DaySchedule({day,onDayChange,store,onEdit,onToggle,onAdd
      })}
    </div>
    <div className="schedule-summary">
-     <div><span>Запланировано</span><strong>{entries.length}</strong></div>
+     <div><span>Праздники</span><strong>{holidays.length}</strong></div>
      <div><span>Загрузка</span><strong>{asDuration(dayLoad)}</strong></div>
      <div><span>Задачи</span><strong>{tasks.length-done} <em>/ {tasks.length}</em></strong></div>
    </div>
-   <div className="schedule-timeline-head"><h3>План по времени</h3><span><Clock3 size={14}/> {day===today?'Сегодня':'Выбранный день'}</span></div>
+   {holidays.length>0&&<section className="schedule-holidays" aria-label="Праздники"><h3>Праздники</h3>{holidays.map(t=><button key={t.id} type="button" onClick={()=>onEdit({kind:'tasks',record:t})}>{holidayLabel(t,store)}</button>)}</section>}
+    <div className="schedule-timeline-head"><h3>План по времени</h3><span><Clock3 size={14}/> {day===today?'Сегодня':'Выбранный день'}</span></div>
    <div className="schedule-timeline">
     {entries.length===0?
       <>{showNow&&nowMarker()}<div className="schedule-empty"><CalendarDays size={32}/><strong>На этот день пока ничего не назначено</strong><p>Добавьте задачу или вернитесь к календарю для планирования.</p><button onClick={onAdd}><Plus size={17}/> Запланировать</button></div></>

@@ -1,0 +1,28 @@
+import {test,expect} from '@playwright/test';
+test('holiday has date and category, appears only in all-day row and daily holidays',async({page})=>{
+ await page.goto('/');
+ await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+ await page.getByRole('button',{name:'Добавить задачу на день'}).click();
+ const dialog=page.getByRole('dialog',{name:'Редактирование'});
+ await dialog.getByRole('checkbox',{name:'Праздник',exact:true}).check();
+ await expect(dialog.locator('input[type=datetime-local]')).toHaveCount(0);
+ await expect(dialog.getByLabel('Приоритет',{exact:true})).toHaveCount(0);
+ await expect(dialog.getByLabel('Цель',{exact:true})).toHaveCount(0);
+ await dialog.locator('input').first().fill('День рождения Баева');
+ await dialog.getByLabel('Направление',{exact:true}).selectOption('2');
+ await dialog.getByLabel('Категория праздника',{exact:true}).selectOption('birthday');
+ const selected=await dialog.getByLabel('Дата праздника *',{exact:true}).inputValue();
+ expect(selected).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+ await dialog.getByRole('button',{name:'Сохранить'}).click();
+ const holiday=page.locator('.schedule-holidays').getByRole('button',{name:'🎂🏃 День рождения Баева',exact:true});
+ await expect(holiday).toBeVisible();
+ await expect(page.locator('.schedule-timeline').getByText('День рождения Баева')).toHaveCount(0);
+ await expect(page.locator('.schedule-summary').getByText('Запланировано')).toHaveCount(0);
+ await page.locator('.nav-item',{hasText:'Календарь'}).click();
+ await expect(page.locator('.all-day').getByRole('button',{name:'🎂🏃 День рождения Баева',exact:true})).toBeVisible();
+ await expect(page.locator('.cal-body').getByText('День рождения Баева')).toHaveCount(0);
+ await page.reload();
+ await page.locator('.all-day').getByRole('button',{name:'🎂🏃 День рождения Баева',exact:true}).click();
+ await expect(dialog.getByLabel('Дата праздника *',{exact:true})).toHaveValue(selected);
+ await expect(dialog.getByRole('checkbox',{name:'Праздник',exact:true})).toBeChecked();
+});

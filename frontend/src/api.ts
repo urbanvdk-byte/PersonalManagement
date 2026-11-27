@@ -4,6 +4,7 @@ import {addDays,dateTimeLocal,dayKey,weekStart} from './date';
 import {DEFAULT_TASK_COLOR,taskColor} from './taskPalette';
 import {hasScheduledTime,isValidTaskDuration} from './taskValidation';
 import {isOccurrenceDate,beforeDate} from './recurrence';
+import {isHolidayType,validHolidayDate} from './holidays';
 
 // GitHub Pages has no backend. This isolated adapter stores only DEMO data in this browser.
 // The production build keeps using the FastAPI + SQLite endpoints unchanged.
@@ -156,6 +157,14 @@ async function demoSave(kind:Kind,values:Row,id?:number,expectedRevision?:number
   const data=loadDemo();
   const list=data[kind] as unknown as Row[];
   const stamp=new Date().toISOString();
+  if(kind==='tasks'){
+    const previous=id?list.find(x=>x.id===id):undefined;
+    const merged={...previous,...values};
+    if(merged.holiday_type!=null){
+      if(!isHolidayType(merged.holiday_type)||!validHolidayDate(merged.holiday_date)||merged.scheduled_at||merged.due_at||merged.project_id!=null||merged.goal_id!=null||merged.parent_id!=null||merged.recurrence||merged.recurrence_until||merged.status!=='planned')throw Error('Некорректный праздник: укажите категорию и дату без времени');
+    }else if(merged.holiday_date!=null)throw Error('Выберите категорию праздника');
+    if(previous&&Boolean(previous.holiday_type)!==Boolean(merged.holiday_type))throw Error('Тип существующей записи нельзя изменить');
+  }
   if(id){
     const row=list.find(x=>x.id===id);
     if(!row)throw Error('Запись не найдена');

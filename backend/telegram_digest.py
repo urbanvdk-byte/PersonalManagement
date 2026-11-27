@@ -29,7 +29,7 @@ REPORT_MONTHS = ("Январь","Февраль","Март","Апрель","Ма
 SEPARATOR = "────────────"
 
 def open_status(task):
-    return task["status"] not in ("done", "cancelled")
+    return not task.get("holiday_type") and task["status"] not in ("done", "cancelled")
 
 def load_tasks(conn):
     tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks ORDER BY id")]
@@ -46,6 +46,8 @@ def period_rows(tasks, exceptions, start, end):
         if when and start.isoformat() <= when[:10] <= end.isoformat() and item["status"] != "cancelled":
             rows.append(item)
     for task in tasks:
+        if task.get("holiday_type"):
+            continue
         scheduled = task.get("scheduled_at")
         if not scheduled:
             continue

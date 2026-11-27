@@ -4,6 +4,7 @@ import {dayKey,makeDay} from './date';
 import {layoutTimedItems} from './calendarLayout';
 import {selectedCalendarDays,type DateSelection} from './miniMonthModel';
 import {expandTasks} from './recurrence';
+import {holidaysOn,holidayLabel} from './holidays';
 import {PRIORITY_COLORS,taskColor,areaEmoji} from './taskPalette';
 import {HOUR_HEIGHT,fromTime,movePreview,resizePreview,toScheduledAt,isPreviewChanged,type CalendarPreview,type GestureMode} from './calendarInteraction';
 import type {Editing,Store,Task} from './types';
@@ -268,7 +269,7 @@ export default function CalendarWeek({start,selection,store,day,setDay,edit,slot
      const key=dayKey(d);
      return <button className={'day-head '+(day===key?'selected ':'')+(rangeOn?'in-range':'')} key={key} onClick={()=>setDay(key)}><small>{d.toLocaleDateString('ru-RU',{weekday:'short'}).toUpperCase()}</small><strong className={key===nowKey?'today':''}>{d.getDate()}</strong></button>;
    })}</div>
-   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}/>)}</div>
+   <div className="cal-row all-day" style={columns}><div className="rail-label">Весь день</div>{days.map(d=><div className={'allday-cell '+(rangeOn?'in-range':'')} key={dayKey(d)}>{holidaysOn(store,dayKey(d)).map(t=><button type="button" className="holiday-calendar-item" key={t.id} title={holidayLabel(t,store)} onClick={()=>edit({kind:'tasks',record:t})}>{holidayLabel(t,store)}</button>)}</div>)}</div>
    <div className="cal-row cal-body" style={columns}>
     <div className="time-rail">{hours.map(h=><span key={h} style={{top:(h-START)*HOUR_HEIGHT-6}}>{String(h).padStart(2,'0')}:00</span>)}</div>
     {dayLayouts.map(({key,tasks,placement})=>{
