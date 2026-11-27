@@ -9,9 +9,9 @@ test('holiday has date and category, appears only in all-day row and daily holid
  await expect(dialog.getByLabel('Приоритет',{exact:true})).toHaveCount(0);
  await expect(dialog.getByLabel('Цель',{exact:true})).toHaveCount(0);
  await dialog.locator('input').first().fill('День рождения Баева');
- await dialog.getByLabel('Направление',{exact:true}).selectOption('2');
- await dialog.getByLabel('Категория праздника',{exact:true}).selectOption('birthday');
- const selected=await dialog.getByLabel('Дата праздника *',{exact:true}).inputValue();
+ await dialog.locator('label.form-field').filter({has:page.locator('span').filter({hasText:/^Направление$/})}).locator('select').selectOption('2');
+ await dialog.locator('label.form-field').filter({has:page.locator('span').filter({hasText:/^Категория праздника$/})}).locator('select').selectOption('birthday');
+ const selected=await dialog.locator('input[type=date]').inputValue();
  expect(selected).toMatch(/^\d{4}-\d{2}-\d{2}$/);
  await dialog.getByRole('button',{name:'Сохранить'}).click();
  const holiday=page.locator('.schedule-holidays').getByRole('button',{name:'🎂🏃 День рождения Баева',exact:true});
@@ -28,6 +28,30 @@ test('holiday has date and category, appears only in all-day row and daily holid
  await expect(page.locator('.cal-body').getByText('День рождения Баева')).toHaveCount(0);
  await page.reload();
  await page.locator('.all-day').getByRole('button',{name:'🎂🏃 День рождения Баева',exact:true}).click();
- await expect(dialog.getByLabel('Дата праздника *',{exact:true})).toHaveValue(selected);
+ await expect(dialog.locator('input[type=date]')).toHaveValue(selected);
  await expect(dialog.getByRole('checkbox',{name:'Праздник',exact:true})).toBeChecked();
 });
+
+ test('holiday repeats in calendar and day schedule next year without copying the stored task',async({page})=>{
+ await page.clock.setFixedTime(new Date(2027,2,15,12));
+ await page.goto('/');
+ await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+ await page.getByRole('button',{name:'Добавить задачу на день'}).click();
+ const dialog=page.getByRole('dialog',{name:'Редактирование'});
+ await dialog.getByRole('checkbox',{name:'Праздник',exact:true}).check();
+ await dialog.locator('input').first().fill('Ежегодная встреча');
+ await dialog.locator('label.form-field').filter({has:page.locator('span').filter({hasText:/^Категория праздника$/})}).locator('select').selectOption('event');
+ await expect(dialog.locator('input[type=date]')).toHaveValue('2027-03-15');
+ await dialog.getByRole('button',{name:'Сохранить'}).click();
+ await expect(page.locator('.schedule-holidays').getByRole('button',{name:'🎈 Ежегодная встреча',exact:true})).toBeVisible();
+ await page.clock.setFixedTime(new Date(2028,2,15,12));
+ await page.reload();
+ await page.locator('.nav-item',{hasText:'Расписание дня'}).click();
+ await expect(page.locator('.schedule-holidays').getByRole('button',{name:'🎈 Ежегодная встреча',exact:true})).toHaveCount(1);
+ await page.locator('.nav-item',{hasText:'Календарь'}).click();
+ const holiday=page.locator('.all-day').getByRole('button',{name:'🎈 Ежегодная встреча',exact:true});
+ await expect(holiday).toBeVisible();
+ await expect(page.locator('.mini-day[data-date="2028-03-15"] .mini-day-dot')).toHaveCount(1);
+ await holiday.click();
+ await expect(dialog.locator('input[type=date]')).toHaveValue('2027-03-15');
+ });

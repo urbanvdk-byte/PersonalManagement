@@ -10,7 +10,7 @@ import CalendarBacklog from './CalendarBacklog';
 import TaskChecklist from './TaskChecklist';
 import PushSettings from './PushSettings';
 import GoalContribution from './GoalContribution';
-import {HOLIDAY_TYPES,isHoliday,isHolidayType,validHolidayDate} from './holidays';
+import {HOLIDAY_TYPES,isHoliday,isHolidayType,validHolidayDate,holidaysOn} from './holidays';
 import {ProjectHistory} from './ProjectExtras';
 import {TASK_COLORS,DEFAULT_TASK_COLOR,AREA_EMOJIS,areaEmoji,taskColor} from './taskPalette';
 import {normalizeRange,shiftCalendarMonth,type DateSelection} from './miniMonthModel';
@@ -160,7 +160,7 @@ function Drawer({editing,store,close,save,remove,saveRecurring,removeRecurring,r
      {field('emoji','Или вставьте свой emoji','Например, 🌞')}
    </>}
    {kind!=='areas'&&<label className="form-field"><span>{kind==='tasks'&&!holiday?'Заметки':'Описание'}</span><textarea rows={3} value={String(form[kind==='tasks'?'notes':'description']??'')} onChange={e=>set(kind==='tasks'?'notes':'description',e.target.value)}/></label>}
-   {holiday&&<>{refs('area_id','Направление',store.areas)}{choices('holiday_type','Категория праздника',HOLIDAY_TYPES)}<label className="form-field"><span>Дата праздника *</span><input type="date" required value={String(form.holiday_date??'')} onChange={e=>set('holiday_date',e.target.value)}/></label></>}
+   {holiday&&<>{refs('area_id','Направление',store.areas)}{choices('holiday_type','Категория праздника',HOLIDAY_TYPES)}<label className="form-field"><span>Дата праздника *</span><input type="date" required value={String(form.holiday_date??'')} onChange={e=>set('holiday_date',e.target.value)}/><small>Повторяется ежегодно</small></label></>}
     {!holiday&&kind!=='areas'&&kind!=='projects'&&<div className="two">{refs('area_id','Направление',store.areas)}{refs('project_id','Проект',store.projects)}</div>}
    {kind==='projects'&&<>
      <div className="form-field"><span>Направления проекта (можно несколько)</span>
@@ -504,7 +504,10 @@ export default function App(){
    const first=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth(),1));
    const last=dayKey(new Date(displayMonth.getFullYear(),displayMonth.getMonth()+1,0));
    expandTasks(data.tasks.filter(isOpen),data.occurrences||[],first,last).forEach(t=>{if(t.scheduled_at)days.add(t.scheduled_at.slice(0,10))});
-   data.tasks.filter(t=>isHoliday(t)&&t.status!=='cancelled'&&t.holiday_date&&t.holiday_date>=first&&t.holiday_date<=last).forEach(t=>days.add(t.holiday_date!));
+   for(let at=makeDay(first);dayKey(at)<=last;at=addDays(at,1)){
+     const key=dayKey(at);
+     if(holidaysOn(data,key).length)days.add(key);
+   }
    return days;
  },[data,displayMonth]);
  function goToDay(key:string){
